@@ -27,7 +27,11 @@
       "shownInTaskbar": false,
       "zOrder": "normal",
       "caching": { "defaultDuration": 604800, "rules": [] },
-      "privileges": { "shellCommands": [] }
+      "privileges": {
+        "shellCommands": [
+          { "program": "C:\\Program Files\\komorebi\\bin\\komorebic.exe", "argsRegex": "^(focus-workspace [0-8])$" }
+        ]
+      }
     }
   ]
 }

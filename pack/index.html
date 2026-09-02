@@ -34,6 +34,30 @@
 
     createRoot(document.getElementById('root')).render(<App />);
 
+    // komorebi's provider is a passive state listener with no command API,
+    // so clicks shell out to komorebic via shellExec.
+    // Absolute path, not bare name: Zebar resolves programs through the
+    // PATH it inherited from its launcher, and it's launched by Explorer,
+    // whose PATH can predate the komorebi install. Each program string
+    // here must match a zpack.json privileges entry character-for-character
+    // (Zebar compares them with ==).
+    const KOMOREBIC = 'C:\\Program Files\\komorebi\\bin\\komorebic.exe';
+
+    const reportError = message => console.error(message);
+
+    async function run(program, args = []) {
+      try {
+        const result = await zebar.shellExec(program, args);
+        if (result.code !== 0) {
+          reportError(`${program} ${args.join(' ')} exited ${result.code}: ${result.stderr || result.stdout}`);
+        }
+      } catch (err) {
+        reportError(`${program} ${args.join(' ')} failed: ${err}`);
+      }
+    }
+
+    const runKomorebic = (...args) => run(KOMOREBIC, args);
+
     const formatGb = bytes => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
     // Hover text for an element: content is a string or
@@ -149,6 +173,7 @@
                   <button
                     key={ws.name ?? i}
                     className={['ws', isWorkspaceFocused(komorebi, ws) && 'is-active', isWorkspaceDisplayed(komorebi, ws) && 'is-visible'].filter(Boolean).join(' ')}
+                    onClick={() => runKomorebic('focus-workspace', String(i))}
                   >
                     {ws.name ?? i + 1}
                   </button>
