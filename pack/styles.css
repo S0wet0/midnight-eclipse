@@ -1,0 +1,260 @@
+/**
+ * Midnight Eclipse — Zebar status bar for komorebi.
+ *
+ * Structure:
+ *   1. Tokens (colour, glow, shape)
+ *   2. Base and the bar's three-column frame
+ *   3. Shared pieces: glass panels, icons, icon buttons
+ *   4. Start zone: workspaces, layout drawer, app list
+ *   5. Middle: clock panel
+ *   6. End zone: status panel (player, tray, stats, quick actions)
+ *
+ * Icons are Nerd Font glyphs: https://www.nerdfonts.com/cheat-sheet
+ */
+@import 'https://www.nerdfonts.com/assets/css/webfont.css';
+
+/* ---------------------------------------------------------------- 1. tokens */
+
+:root {
+  --accent: rgb(0 255 255 / 100%);
+  --accent-glow: rgb(0 255 255 / 80%);
+  --accent-border: rgb(0 255 255 / 30%);
+  --accent-border-strong: rgb(0 255 255 / 60%);
+  --accent-hover-bg: rgb(0 255 255 / 40%);
+  --text: rgb(255 255 255 / 100%);
+  --panel-bg: rgb(20 20 30 / 80%);
+  --panel-bg-soft: rgb(20 20 30 / 50%);
+  --root-bg: rgb(0 0 0 / 30%);
+  --root-border: rgb(0 255 255 / 40%);
+  --danger: rgb(255 0 0 / 100%);
+  --warning: rgb(255 220 0 / 100%);
+  --success: rgb(0 255 0 / 100%);
+
+  --radius: 4px;
+  --halo-sm: 0 0 10px var(--accent-border);
+  --halo-md: 0 0 15px var(--accent-border);
+  --halo-lg: 0 0 20px var(--accent-border);
+  --text-halo: 0 0 10px var(--accent-glow);
+}
+
+/* ------------------------------------------------------------ 2. base, frame */
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+  color: var(--text);
+  font: 12px ui-monospace, monospace;
+  cursor: default;
+  user-select: none;
+}
+
+/* The bar's glass strip. */
+#root {
+  background-color: var(--root-bg);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--root-border);
+  box-shadow: var(--halo-lg);
+}
+
+/* Three columns: start zone, clock, end zone. */
+.bar {
+  height: 100%;
+  padding: 4px 0.3vw;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+
+.zone {
+  display: flex;
+  align-items: center;
+}
+
+.zone-end {
+  justify-self: end;
+}
+
+/* ---------------------------------------------------------- 3. shared pieces */
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  box-shadow: var(--halo-md);
+  padding: 4px 12px;
+}
+
+/* Every glyph glows in the accent colour; spacing next to a glyph comes from
+   its container (gap), so glyphs carry no margin of their own. */
+.nf {
+  color: var(--accent);
+  text-shadow: var(--text-halo);
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  padding: 2px 3px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--accent-hover-bg);
+  }
+}
+
+/* A vertical rule between groups inside a panel or zone. */
+.divider-before {
+  border-left: 1px solid var(--accent-border);
+  padding-left: 8px;
+}
+
+/* ------------------------------------------------------------- 4. start zone */
+
+.brand {
+  margin-right: 12px;
+}
+
+.ws-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ws {
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  box-shadow: var(--halo-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  /* Shown on its monitor but not focused (multi-monitor). */
+  &.is-visible {
+    background: var(--panel-bg-soft);
+    box-shadow: var(--halo-md);
+  }
+
+  &.is-active,
+  &:hover {
+    background: var(--accent-hover-bg);
+    border-color: var(--accent-border-strong);
+    box-shadow: 0 0 20px var(--accent-hover-bg);
+    text-shadow: var(--text-halo);
+    transform: translateY(-1px);
+  }
+}
+
+/* ------------------------------------------------------------ 5. clock panel */
+
+.clock {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-shadow: var(--text-halo);
+}
+
+.clock-date {
+  font-weight: 600;
+}
+
+/* "• window title", the dot drawn here so the title alone truncates. */
+.clock-window {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+
+  &::before {
+    content: '•';
+    margin: 0 8px;
+    color: var(--accent);
+    opacity: 0.6;
+    font-weight: bold;
+  }
+}
+
+/* Bounded so a long window title can't widen the clock into the sides. */
+.clock-title {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  opacity: 0.9;
+  font-size: 0.95em;
+  font-weight: 400;
+  text-transform: capitalize;
+}
+
+/* -------------------------------------------------------- 6. status panel */
+
+.status {
+  display: flex;
+  align-items: center;
+}
+
+/* A status reading: glyph + value, as a button when it has a click action. */
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 6px;
+  padding: 2px 5px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    background: var(--accent-hover-bg);
+    box-shadow: var(--halo-sm);
+  }
+
+  /* Display-only readings (CPU, memory, weather): hover tooltip, but no
+     pointer or highlight suggesting a click does something. */
+  &.readonly {
+    cursor: default;
+
+    &:hover {
+      background: transparent;
+      box-shadow: none;
+    }
+  }
+}
+
+.is-high {
+  color: var(--accent);
+  text-shadow: var(--text-halo);
+}
+
+.is-muted {
+  color: var(--danger);
+  text-shadow: 0 0 10px var(--danger);
+}
+
+/* Network: glyph, SSID, then live down/up rates in smaller type. */
+.stat-net {
+  gap: 8px;
+
+  & > .nf {
+    margin-right: 3px;
+  }
+}
+
+.net-rates {
+  display: flex;
+  gap: 4px;
+  color: var(--accent);
+  font-size: 0.85em;
+  text-shadow: var(--text-halo);
+}

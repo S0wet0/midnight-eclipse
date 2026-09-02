@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Midnight Eclipse</title>
+  <link rel="stylesheet" type="text/css" href="./styles.css" />
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"
+    integrity="sha256-aS0B0wnsaDByLfE16h4MDCP1fQFccysd1YWOcV+gbBo=" crossorigin="anonymous"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    // Midnight Eclipse — Zebar status bar for komorebi.
+    import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18?dev';
+    import { createRoot } from 'https://esm.sh/react-dom@18/client?dev';
+    // Pinned to the installed Zebar app's version. The v2 client lacked
+    // audio.setMute and the systray provider entirely.
+    import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+    // Zebar data sources, alphabetical.
+    const providers = zebar.createProviderGroup({
+      audio: { type: 'audio' },
+      battery: { type: 'battery' },
+      cpu: { type: 'cpu' },
+      date: { type: 'date', formatting: 'EEE d MMM, h:mm a' },
+      komorebi: { type: 'komorebi' },
+      memory: { type: 'memory' },
+      network: { type: 'network' },
+      weather: { type: 'weather' },
+    });
+
+    createRoot(document.getElementById('root')).render(<App />);
+
+    const formatGb = bytes => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+
+    // Hover text for an element: content is a string or
+    // { title, rows: [[label, value], ...], hint }, shown as a native tooltip.
+    function tip(content) {
+      if (!content) return {};
+      if (typeof content === 'string') return { title: content };
+      const rows = (content.rows ?? []).map(([label, value]) => `${label}: ${value}`);
+      return { title: [content.title, ...rows, content.hint].filter(Boolean).join('\n') };
+    }
+
+    // komorebi's KomorebiWorkspace has no hasFocus/isDisplayed booleans —
+    // derive them by comparing against the
+    // top-level focusedWorkspace/displayedWorkspace references.
+    function isWorkspaceFocused(komorebi, workspace) {
+      return komorebi.focusedWorkspace?.name === workspace.name;
+    }
+    function isWorkspaceDisplayed(komorebi, workspace) {
+      return komorebi.displayedWorkspace?.name === workspace.name;
+    }
+
+    // komorebi has no top-level "active window" field. Derive it from
+    // the focused workspace: prefer monocleContainer if monocle mode
+    // is active, otherwise the container at focusedContainerIndex.
+    function getFocusedWindow(workspace) {
+      if (!workspace) return null;
+      const container =
+        workspace.monocleContainer ??
+        workspace.tilingContainers?.[workspace.focusedContainerIndex];
+      return container?.windows?.[0] ?? null;
+    }
+
+    // ---------------------------------------------------------------- glyphs
+    // Nerd Font glyph names for each reading. Levels count how many
+    // thresholds a value passes, so each table reads low to high.
+
+    const Glyph = ({ name, className }) => <i className={className ? `nf ${name} ${className}` : `nf ${name}`}></i>;
+    const passed = (value, thresholds, strict) => thresholds.filter(t => (strict ? value > t : value >= t)).length;
+
+    // Wi-Fi signal strength (%) at which each bar appears.
+    const WIFI_STEPS = [25, 40, 65, 80];
+    function networkGlyph(net) {
+      const kind = net.defaultInterface?.type;
+      if (kind === 'ethernet') return 'nf-md-ethernet_cable';
+      if (kind !== 'wifi') return 'nf-md-wifi_strength_off_outline';
+      const bars = passed(net.defaultGateway?.signalStrength ?? 0, WIFI_STEPS);
+      return bars ? `nf-md-wifi_strength_${bars}` : 'nf-md-wifi_strength_outline';
+    }
+
+    // Charge (%) above which each battery segment fills (nf-fa-battery_0..4).
+    const BATTERY_STEPS = [20, 40, 70, 90];
+    const batteryGlyph = percent => `nf-fa-battery_${passed(percent, BATTERY_STEPS, true)}`;
+
+    // Volume (%) above which the next louder speaker glyph is used.
+    const VOLUME_GLYPHS = ['nf-fa-volume_down', 'nf-md-volume_medium', 'nf-fa-volume_up'];
+    const VOLUME_STEPS = [33, 66];
+    function volumeGlyph(device) {
+      const volume = Math.round(device.volume ?? 0);
+      if (device.isMuted || volume === 0) return 'nf-fa-volume_off';
+      return VOLUME_GLYPHS[passed(volume, VOLUME_STEPS, true)];
+    }
+
+    // Zebar weather status -> glyph in the Nerd Font weather set.
+    const WEATHER_GLYPHS = {
+      clear_day: 'day_sunny', clear_night: 'night_clear',
+      cloudy_day: 'day_cloudy', cloudy_night: 'night_alt_cloudy',
+      light_rain_day: 'day_sprinkle', light_rain_night: 'night_alt_sprinkle',
+      heavy_rain_day: 'day_rain', heavy_rain_night: 'night_alt_rain',
+      snow_day: 'day_snow', snow_night: 'night_alt_snow',
+      thunder_day: 'day_lightning', thunder_night: 'night_alt_lightning',
+    };
+    const weatherGlyph = status => WEATHER_GLYPHS[status] && `nf-weather-${WEATHER_GLYPHS[status]}`;
+
+    // CPU/memory usage (%) above which the value is highlighted.
+    const BUSY_PERCENT = 85;
+
+    function App() {
+      // Latest data from every provider, refreshed on each emission.
+      const [output, setOutput] = useState(() => providers.outputMap);
+      useEffect(() => {
+        providers.onOutput(() => setOutput(providers.outputMap));
+      }, []);
+
+      const komorebi = output.komorebi;
+      const focusedWindow = komorebi ? getFocusedWindow(komorebi.focusedWorkspace) : null;
+
+      const audio = output.audio;
+      const playback = audio?.defaultPlaybackDevice;
+      const net = output.network;
+      const netTip = net && {
+        title: net.defaultInterface?.friendlyName ?? 'No connection',
+        rows: [
+          net.defaultGateway?.ssid && ['SSID', net.defaultGateway.ssid],
+          net.defaultGateway?.signalStrength != null && ['Signal', `${net.defaultGateway.signalStrength}%`],
+          net.defaultInterface?.ipv4Addresses?.[0] && ['IP', net.defaultInterface.ipv4Addresses[0].replace(/\/\d+$/, '')],
+          net.traffic && ['Session', `↓ ${net.traffic.totalReceived.siValue.toFixed(1)} ${net.traffic.totalReceived.siUnit}   ↑ ${net.traffic.totalTransmitted.siValue.toFixed(1)} ${net.traffic.totalTransmitted.siUnit}`],
+        ].filter(Boolean),
+      };
+
+      const mem = output.memory;
+      const cpu = output.cpu;
+      const battery = output.battery;
+      const weather = output.weather;
+
+      return (
+        <div className="bar">
+          <div className="zone">
+            <Glyph name="nf-fa-windows" className="brand" />
+
+            {komorebi && (
+              <div className="ws-list">
+                {komorebi.currentWorkspaces.map((ws, i) => (
+                  <button
+                    key={ws.name ?? i}
+                    className={['ws', isWorkspaceFocused(komorebi, ws) && 'is-active', isWorkspaceDisplayed(komorebi, ws) && 'is-visible'].filter(Boolean).join(' ')}
+                  >
+                    {ws.name ?? i + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="panel clock">
+            <span className="clock-date">
+              {output.date?.formatted}
+            </span>
+            {focusedWindow?.exe && (
+              <span className="clock-window">
+                <span className="clock-title">{focusedWindow.title || focusedWindow.exe}</span>
+              </span>
+            )}
+          </div>
+
+          <div className="zone zone-end">
+            <div className="panel status">
+              {net && (
+                <div className="stat readonly stat-net" {...tip(netTip)}>
+                  <Glyph name={networkGlyph(net)} />
+                  {net.defaultGateway?.ssid}
+                  <span className="net-rates">
+                    <span>↓{net.traffic?.received?.siValue}{net.traffic?.received?.siUnit}</span>
+                    <span>↑{net.traffic?.transmitted?.siValue}{net.traffic?.transmitted?.siUnit}</span>
+                  </span>
+                </div>
+              )}
+
+              {mem && (
+                <div
+                  className="stat readonly"
+                  {...tip({ title: 'Memory', rows: [['RAM', `${formatGb(mem.usedMemory)} / ${formatGb(mem.totalMemory)}`], ['Swap', `${formatGb(mem.usedSwap)} / ${formatGb(mem.totalSwap)}`]] })}
+                >
+                  <Glyph name="nf-fae-chip" />
+                  <span className={mem.usage > BUSY_PERCENT ? 'is-high' : undefined}>{Math.round(mem.usage)}%</span>
+                </div>
+              )}
+
+              {cpu && (
+                <div
+                  className="stat readonly"
+                  {...tip({ title: 'CPU', rows: [['Usage', `${Math.round(cpu.usage)}%`], ['Cores', String(cpu.physicalCoreCount)], ['Threads', String(cpu.logicalCoreCount)]] })}
+                >
+                  <Glyph name="nf-oct-cpu" />
+                  <span className={cpu.usage > BUSY_PERCENT ? 'is-high' : undefined}>{Math.round(cpu.usage)}%</span>
+                </div>
+              )}
+
+              {battery && (
+                <div
+                  className="stat readonly"
+                  {...tip({
+                    title: 'Battery',
+                    rows: [
+                      ['Charge', `${Math.round(battery.chargePercent)}%`],
+                      ['State', battery.isCharging ? 'charging' : battery.state],
+                      battery.healthPercent != null && ['Health', `${Math.round(battery.healthPercent)}%`],
+                    ].filter(Boolean),
+                  })}
+                >
+                  <Glyph name={batteryGlyph(battery.chargePercent)} />
+                  {Math.round(battery.chargePercent)}%
+                </div>
+              )}
+
+              {audio && playback && (
+                <div className="stat readonly" {...tip({ title: 'Volume', rows: [['Device', playback.name], ['Level', `${Math.round(playback.volume)}%`]] })}>
+                  <Glyph name={volumeGlyph(playback)} />
+                  <span className={playback.isMuted ? 'is-muted' : undefined}>{Math.round(playback.volume)}%</span>
+                </div>
+              )}
+
+              {weather && (
+                <div
+                  className="stat readonly"
+                  {...tip({
+                    title: 'Weather',
+                    rows: [
+                      ['Now', weather.status.replaceAll('_', ' ')],
+                      ['Temp', `${Math.round(weather.celsiusTemp)}°C / ${Math.round(weather.fahrenheitTemp)}°F`],
+                      ['Wind', `${Math.round(weather.windSpeed)} km/h`],
+                    ],
+                  })}
+                >
+                  {weatherGlyph(weather.status) && <Glyph name={weatherGlyph(weather.status)} />}
+                  {Math.round(weather.celsiusTemp)}°C
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+  </script>
+</body>
+
+</html>
