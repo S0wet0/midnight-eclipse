@@ -2,7 +2,8 @@
  * Midnight Eclipse — Zebar status bar for komorebi.
  *
  * Structure:
- *   1. Tokens (colour, glow, shape)
+ *   1. Tokens (colour, glow, shape), with a light-theme variant that
+ *      follows the Windows theme through `prefers-color-scheme`
  *   2. Base and the bar's three-column frame
  *   3. Shared pieces: glass panels, icons, icon buttons
  *   4. Start zone: workspaces, layout drawer, app list
@@ -35,6 +36,25 @@
   --halo-md: 0 0 15px var(--accent-border);
   --halo-lg: 0 0 20px var(--accent-border);
   --text-halo: 0 0 10px var(--accent-glow);
+}
+
+/* Light variant: a deeper accent that stays legible on light glass. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --accent: rgb(0 140 150 / 100%);
+    --accent-glow: rgb(0 140 150 / 60%);
+    --accent-border: rgb(0 140 150 / 35%);
+    --accent-border-strong: rgb(0 140 150 / 65%);
+    --accent-hover-bg: rgb(0 140 150 / 25%);
+    --text: rgb(20 20 30 / 100%);
+    --panel-bg: rgb(255 255 255 / 75%);
+    --panel-bg-soft: rgb(255 255 255 / 50%);
+    --root-bg: rgb(255 255 255 / 45%);
+    --root-border: rgb(0 140 150 / 35%);
+    --danger: rgb(200 0 0 / 100%);
+    --warning: rgb(170 120 0 / 100%);
+    --success: rgb(0 130 0 / 100%);
+  }
 }
 
 /* ------------------------------------------------------------ 2. base, frame */
