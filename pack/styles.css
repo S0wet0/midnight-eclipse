@@ -247,6 +247,17 @@ body {
   text-transform: capitalize;
 }
 
+/* Shown in the clock panel for 10s after a command fails; hover for why. */
+.error-flag {
+  margin-right: 8px;
+  cursor: help;
+
+  & .nf {
+    color: var(--danger);
+    text-shadow: 0 0 10px var(--danger);
+  }
+}
+
 /* -------------------------------------------------------- 6. status panel */
 
 .status {

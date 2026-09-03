@@ -43,7 +43,13 @@
     // (Zebar compares them with ==).
     const KOMOREBIC = 'C:\\Program Files\\komorebi\\bin\\komorebic.exe';
 
-    const reportError = message => console.error(message);
+    // Failures otherwise land only in the widget's devtools console,
+    // which is invisible in normal use — surface them in the bar instead.
+    const errorListeners = new Set();
+    function reportError(message) {
+      console.error(message);
+      errorListeners.forEach(fn => fn(message));
+    }
 
     async function run(program, args = []) {
       try {
@@ -173,6 +179,7 @@
     function App() {
       // Latest data from every provider, refreshed on each emission.
       const [output, setOutput] = useState(() => providers.outputMap);
+      const [lastError, setLastError] = useState(null);
       const [layoutMemory, setLayoutMemory] = useState(loadLayoutMemory);
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
       function toggleLayouts() {
@@ -191,6 +198,20 @@
           return next;
         });
       }
+
+      useEffect(() => {
+        let timer;
+        const onError = message => {
+          setLastError(message);
+          clearTimeout(timer);
+          timer = setTimeout(() => setLastError(null), 10000);
+        };
+        errorListeners.add(onError);
+        return () => {
+          errorListeners.delete(onError);
+          clearTimeout(timer);
+        };
+      }, []);
 
       useEffect(() => {
         providers.onOutput(() => setOutput(providers.outputMap));
@@ -283,6 +304,11 @@
           </div>
 
           <div className="panel clock">
+            {lastError && (
+              <span className="error-flag" {...tip({ title: 'Command failed', rows: [['Error', lastError]], tone: 'error' })}>
+                <Glyph name="nf-fa-warning" />
+              </span>
+            )}
             <span className="clock-date">
               {output.date?.formatted}
             </span>
