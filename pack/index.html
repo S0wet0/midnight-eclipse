@@ -107,14 +107,23 @@
       { id: 'scrolling', label: 'Scrolling', icon: 'nf-md-view_carousel', zebar: 'custom' },
     ];
 
+    // Per-workspace memory of the last layout the bar set, used only to
+    // tell Columns from Scrolling when Zebar reports 'custom'.
+    const LAYOUT_MEMORY_KEY = 'midnight-eclipse-layout-memory';
+    function loadLayoutMemory() {
+      try { return JSON.parse(localStorage.getItem(LAYOUT_MEMORY_KEY) ?? '{}'); } catch { return {}; }
+    }
+
     const LAYOUTS_OPEN_KEY = 'midnight-eclipse-layouts-open';
     function loadLayoutsOpen() {
       try { return localStorage.getItem(LAYOUTS_OPEN_KEY) === 'true'; } catch { return false; }
     }
 
-    function resolveLayout(workspace) {
+    function resolveLayout(workspace, memory) {
       if (!workspace) return null;
-      return LAYOUTS.find(l => l.zebar === workspace.layout) ?? null;
+      if (workspace.layout !== 'custom') return LAYOUTS.find(l => l.zebar === workspace.layout) ?? null;
+      const remembered = LAYOUTS.find(l => l.id === memory[workspace.name]);
+      return remembered?.zebar === 'custom' ? remembered : null;
     }
 
     // ---------------------------------------------------------------- glyphs
@@ -164,6 +173,7 @@
     function App() {
       // Latest data from every provider, refreshed on each emission.
       const [output, setOutput] = useState(() => providers.outputMap);
+      const [layoutMemory, setLayoutMemory] = useState(loadLayoutMemory);
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
       function toggleLayouts() {
         setLayoutsOpen(prev => {
@@ -173,8 +183,13 @@
         });
       }
 
-      function chooseLayout(layout) {
+      function chooseLayout(workspaceName, layout) {
         runKomorebic('change-layout', layout.id);
+        setLayoutMemory(prev => {
+          const next = { ...prev, [workspaceName]: layout.id };
+          try { localStorage.setItem(LAYOUT_MEMORY_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
       }
 
       useEffect(() => {
@@ -203,7 +218,7 @@
       const weather = output.weather;
 
       const workspace = komorebi?.focusedWorkspace;
-      const currentLayout = resolveLayout(workspace);
+      const currentLayout = resolveLayout(workspace, layoutMemory);
       // inline-block because CSS transforms don't apply to inline elements,
       // which <i> is by default; `mirror` flips a glyph to show the opposite
       // side (right-main vs left-main stacks).
@@ -255,7 +270,7 @@
                     key={layout.id}
                     className={layout === currentLayout ? 'layout-opt is-current' : 'layout-opt'}
                     {...tip(layout === currentLayout ? { title: layout.label, hint: 'Current layout' } : layout.label)}
-                    onClick={() => chooseLayout(layout)}
+                    onClick={() => chooseLayout(workspace.name, layout)}
                   >
                     <LayoutGlyph layout={layout} />
                   </button>
