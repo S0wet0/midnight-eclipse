@@ -170,6 +170,40 @@ body {
   }
 }
 
+/* Layout drawer: collapsed it's one button showing the focused workspace's
+   layout; open, all nine appear with the current one first. */
+.layout-drawer {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 12px;
+}
+
+.layout-opt {
+  background: var(--panel-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  box-shadow: var(--halo-sm);
+  padding: 4px 6px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.2s ease;
+
+  &:hover {
+    opacity: 1;
+    background: var(--accent-hover-bg);
+    border-color: var(--accent-border-strong);
+    transform: translateY(-1px);
+  }
+
+  &.is-current {
+    opacity: 1;
+    background: var(--accent-hover-bg);
+    border-color: var(--accent-border-strong);
+    box-shadow: 0 0 16px var(--accent-hover-bg);
+  }
+}
+
 /* ------------------------------------------------------------ 5. clock panel */
 
 .clock {

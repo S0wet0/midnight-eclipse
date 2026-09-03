@@ -29,7 +29,7 @@
       "caching": { "defaultDuration": 604800, "rules": [] },
       "privileges": {
         "shellCommands": [
-          { "program": "C:\\Program Files\\komorebi\\bin\\komorebic.exe", "argsRegex": "^(focus-workspace [0-8])$" }
+          { "program": "C:\\Program Files\\komorebi\\bin\\komorebic.exe", "argsRegex": "^(focus-workspace [0-8]|change-layout (bsp|columns|rows|vertical-stack|horizontal-stack|ultrawide-vertical-stack|grid|right-main-vertical-stack|scrolling))$" }
         ]
       }
     }

@@ -90,6 +90,33 @@
       return container?.windows?.[0] ?? null;
     }
 
+    // `id` is what `komorebic change-layout` accepts. `zebar` is how
+    // Zebar's komorebi provider reports it: its parser only knows seven
+    // layouts by name, and anything else (Columns, Scrolling) arrives as
+    // 'custom' via a serde(other) fallback, so those two are
+    // indistinguishable without remembering what the bar set.
+    const LAYOUTS = [
+      { id: 'bsp', label: 'BSP', icon: 'nf-md-view_quilt', zebar: 'bsp' },
+      { id: 'vertical-stack', label: 'Vertical Stack', icon: 'nf-md-view_split_vertical', mirror: true, zebar: 'vertical_stack' },
+      { id: 'right-main-vertical-stack', label: 'Right Main Vertical Stack', icon: 'nf-md-view_split_vertical', zebar: 'right_main_vertical_stack' },
+      { id: 'horizontal-stack', label: 'Horizontal Stack', icon: 'nf-md-view_compact', zebar: 'horizontal_stack' },
+      { id: 'columns', label: 'Columns', icon: 'nf-md-view_column', zebar: 'custom' },
+      { id: 'rows', label: 'Rows', icon: 'nf-md-view_agenda', zebar: 'rows' },
+      { id: 'grid', label: 'Grid', icon: 'nf-md-view_grid', zebar: 'grid' },
+      { id: 'ultrawide-vertical-stack', label: 'Ultrawide Vertical Stack', icon: 'nf-md-view_array', zebar: 'ultrawide_vertical_stack' },
+      { id: 'scrolling', label: 'Scrolling', icon: 'nf-md-view_carousel', zebar: 'custom' },
+    ];
+
+    const LAYOUTS_OPEN_KEY = 'midnight-eclipse-layouts-open';
+    function loadLayoutsOpen() {
+      try { return localStorage.getItem(LAYOUTS_OPEN_KEY) === 'true'; } catch { return false; }
+    }
+
+    function resolveLayout(workspace) {
+      if (!workspace) return null;
+      return LAYOUTS.find(l => l.zebar === workspace.layout) ?? null;
+    }
+
     // ---------------------------------------------------------------- glyphs
     // Nerd Font glyph names for each reading. Levels count how many
     // thresholds a value passes, so each table reads low to high.
@@ -137,6 +164,19 @@
     function App() {
       // Latest data from every provider, refreshed on each emission.
       const [output, setOutput] = useState(() => providers.outputMap);
+      const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
+      function toggleLayouts() {
+        setLayoutsOpen(prev => {
+          const next = !prev;
+          try { localStorage.setItem(LAYOUTS_OPEN_KEY, String(next)); } catch {}
+          return next;
+        });
+      }
+
+      function chooseLayout(layout) {
+        runKomorebic('change-layout', layout.id);
+      }
+
       useEffect(() => {
         providers.onOutput(() => setOutput(providers.outputMap));
       }, []);
@@ -162,6 +202,18 @@
       const battery = output.battery;
       const weather = output.weather;
 
+      const workspace = komorebi?.focusedWorkspace;
+      const currentLayout = resolveLayout(workspace);
+      // inline-block because CSS transforms don't apply to inline elements,
+      // which <i> is by default; `mirror` flips a glyph to show the opposite
+      // side (right-main vs left-main stacks).
+      const LayoutGlyph = ({ layout }) => (
+        <i
+          className={`nf ${layout.icon}`}
+          style={{ display: 'inline-block', transform: layout.mirror ? 'scaleX(-1)' : undefined }}
+        ></i>
+      );
+
       return (
         <div className="bar">
           <div className="zone">
@@ -178,6 +230,39 @@
                     {ws.name ?? i + 1}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Layout drawer. Collapsed: the current layout + an expand
+                chevron. Open: all nine, current first and highlighted. When
+                the current layout can't be told apart (Columns/Scrolling set
+                outside the bar), a neutral glyph stands in for it. */}
+            {workspace && (
+              <div className="layout-drawer divider-before">
+                {!layoutsOpen && (
+                  <button
+                    className="layout-opt is-current"
+                    {...tip(currentLayout
+                      ? { title: currentLayout.label, hint: 'Current layout · click for all' }
+                      : { title: 'Columns or Scrolling', hint: 'Set outside the bar, so which one is unknown · click for all' })}
+                    onClick={toggleLayouts}
+                  >
+                    {currentLayout ? <LayoutGlyph layout={currentLayout} /> : <Glyph name="nf-md-dots_horizontal" />}
+                  </button>
+                )}
+                {layoutsOpen && (currentLayout ? [currentLayout, ...LAYOUTS.filter(l => l !== currentLayout)] : LAYOUTS).map(layout => (
+                  <button
+                    key={layout.id}
+                    className={layout === currentLayout ? 'layout-opt is-current' : 'layout-opt'}
+                    {...tip(layout === currentLayout ? { title: layout.label, hint: 'Current layout' } : layout.label)}
+                    onClick={() => chooseLayout(layout)}
+                  >
+                    <LayoutGlyph layout={layout} />
+                  </button>
+                ))}
+                <button className="icon-btn" {...tip(layoutsOpen ? 'Hide layouts' : 'Show all layouts')} onClick={toggleLayouts}>
+                  <Glyph name={layoutsOpen ? 'nf-md-chevron_left' : 'nf-md-chevron_right'} />
+                </button>
               </div>
             )}
           </div>
