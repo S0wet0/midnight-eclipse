@@ -233,6 +233,12 @@
 
       const audio = output.audio;
       const playback = audio?.defaultPlaybackDevice;
+      function changeVolume(delta) {
+        if (!playback) return;
+        const next = Math.max(0, Math.min(100, Math.round(playback.volume + delta)));
+        call('set volume', () => audio.setVolume(next, { deviceId: playback.deviceId }));
+      }
+
       const media = output.media;
       const session = media?.currentSession ?? media?.session ?? null;
       const mediaLabel = session ? [session.artist, session.title].filter(Boolean).join(' – ') : '';
@@ -406,10 +412,19 @@
               )}
 
               {audio && playback && (
-                <div className="stat readonly" {...tip({ title: 'Volume', rows: [['Device', playback.name], ['Level', `${Math.round(playback.volume)}%`]] })}>
+                <button
+                  className="stat"
+                  {...tip({
+                    title: 'Volume',
+                    rows: [['Device', playback.name], ['Level', playback.isMuted ? `${Math.round(playback.volume)}% (muted)` : `${Math.round(playback.volume)}%`]],
+                    hint: 'Click: mute · Scroll: volume',
+                  })}
+                  onClick={() => call('mute', () => audio.setMute(!playback.isMuted, { deviceId: playback.deviceId }))}
+                  onWheel={e => changeVolume(e.deltaY < 0 ? -5 : 5)}
+                >
                   <Glyph name={volumeGlyph(playback)} />
                   <span className={playback.isMuted ? 'is-muted' : undefined}>{Math.round(playback.volume)}%</span>
-                </div>
+                </button>
               )}
 
               {weather && (
