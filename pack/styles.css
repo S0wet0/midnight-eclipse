@@ -217,6 +217,14 @@ body {
 
 .clock-date {
   font-weight: 600;
+  border-radius: var(--radius);
+  padding: 0 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: var(--accent-hover-bg);
+  }
 }
 
 /* "• window title", the dot drawn here so the title alone truncates. */
@@ -340,4 +348,12 @@ body {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+/* Quick Settings shortcuts at the end of the status panel. */
+.quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
 }

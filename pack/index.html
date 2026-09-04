@@ -65,6 +65,16 @@
 
     const runKomorebic = (...args) => run(KOMOREBIC, args);
 
+    // Opening apps/Settings pages goes through explorer.exe so Windows
+    // handles ms-actioncenter: URIs and self-elevating apps (Task Manager).
+    // Spawned, not exec'd: explorer.exe exits with code 1 even on
+    // success, which run() would misreport as a failure.
+    function openShell(target = '') {
+      zebar.shellSpawn('explorer.exe', target ? [target] : []).catch(err =>
+        reportError(`explorer.exe ${target} failed: ${err}`),
+      );
+    }
+
     const formatGb = bytes => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
     // Wraps a provider method call (setVolume, togglePlayPause, tray
@@ -142,6 +152,23 @@
       const remembered = LAYOUTS.find(l => l.id === memory[workspace.name]);
       return remembered?.zebar === 'custom' ? remembered : null;
     }
+
+    // Windows 11 Quick Settings panels. Each target was verified on this
+    // machine (25H2, build 26200) by opening it through explorer.exe and
+    // screenshotting the result. These links are undocumented: unknown
+    // page names silently fall back to the main page (that fallback is
+    // what `controlcenter/` relies on), and `controlcenter` without the
+    // slash opens Notifications instead. `&showFooter=true`, often cited
+    // online, opened nothing via explorer.exe.
+    const QS = {
+      main: 'ms-actioncenter:controlcenter/',
+      wifi: 'ms-actioncenter:controlcenter/wifi',
+      bluetooth: 'ms-actioncenter:controlcenter/bluetooth',
+      cast: 'ms-actioncenter:controlcenter/cast',
+      project: 'ms-actioncenter:controlcenter/project',
+      volume: 'ms-actioncenter:controlcenter/volume',
+      notifications: 'ms-actioncenter:',
+    };
 
     // ---------------------------------------------------------------- glyphs
     // Nerd Font glyph names for each reading. Levels count how many
@@ -252,6 +279,7 @@
           net.defaultInterface?.ipv4Addresses?.[0] && ['IP', net.defaultInterface.ipv4Addresses[0].replace(/\/\d+$/, '')],
           net.traffic && ['Session', `↓ ${net.traffic.totalReceived.siValue.toFixed(1)} ${net.traffic.totalReceived.siUnit}   ↑ ${net.traffic.totalTransmitted.siValue.toFixed(1)} ${net.traffic.totalTransmitted.siUnit}`],
         ].filter(Boolean),
+        hint: 'Click: Wi-Fi panel',
       };
 
       const mem = output.memory;
@@ -330,7 +358,7 @@
                 <Glyph name="nf-fa-warning" />
               </span>
             )}
-            <span className="clock-date">
+            <span className="clock-date" {...tip({ title: 'Notifications & calendar', hint: 'Click to open' })} onClick={() => openShell(QS.notifications)}>
               {output.date?.formatted}
             </span>
             {focusedWindow?.exe && (
@@ -364,14 +392,14 @@
               )}
 
               {net && (
-                <div className="stat readonly stat-net" {...tip(netTip)}>
+                <button className="stat stat-net" {...tip(netTip)} onClick={() => openShell(QS.wifi)}>
                   <Glyph name={networkGlyph(net)} />
                   {net.defaultGateway?.ssid}
                   <span className="net-rates">
                     <span>↓{net.traffic?.received?.siValue}{net.traffic?.received?.siUnit}</span>
                     <span>↑{net.traffic?.transmitted?.siValue}{net.traffic?.transmitted?.siUnit}</span>
                   </span>
-                </div>
+                </button>
               )}
 
               {mem && (
@@ -395,8 +423,8 @@
               )}
 
               {battery && (
-                <div
-                  className="stat readonly"
+                <button
+                  className="stat"
                   {...tip({
                     title: 'Battery',
                     rows: [
@@ -404,11 +432,13 @@
                       ['State', battery.isCharging ? 'charging' : battery.state],
                       battery.healthPercent != null && ['Health', `${Math.round(battery.healthPercent)}%`],
                     ].filter(Boolean),
+                    hint: 'Click: Quick Settings (energy saver, brightness)',
                   })}
+                  onClick={() => openShell(QS.main)}
                 >
                   <Glyph name={batteryGlyph(battery.chargePercent)} />
                   {Math.round(battery.chargePercent)}%
-                </div>
+                </button>
               )}
 
               {audio && playback && (
@@ -417,10 +447,11 @@
                   {...tip({
                     title: 'Volume',
                     rows: [['Device', playback.name], ['Level', playback.isMuted ? `${Math.round(playback.volume)}% (muted)` : `${Math.round(playback.volume)}%`]],
-                    hint: 'Click: mute · Scroll: volume',
+                    hint: 'Click: mute · Scroll: volume · Right-click: output & mixer',
                   })}
                   onClick={() => call('mute', () => audio.setMute(!playback.isMuted, { deviceId: playback.deviceId }))}
                   onWheel={e => changeVolume(e.deltaY < 0 ? -5 : 5)}
+                  onContextMenu={e => { e.preventDefault(); openShell(QS.volume); }}
                 >
                   <Glyph name={volumeGlyph(playback)} />
                   <span className={playback.isMuted ? 'is-muted' : undefined}>{Math.round(playback.volume)}%</span>
@@ -443,6 +474,24 @@
                   {Math.round(weather.celsiusTemp)}°C
                 </div>
               )}
+
+              <div className="quick-actions divider-before">
+                <button className="icon-btn" {...tip('Bluetooth')} onClick={() => openShell(QS.bluetooth)}>
+                  <Glyph name="nf-md-bluetooth" />
+                </button>
+                <button className="icon-btn" {...tip({ title: 'Cast', hint: 'To a wireless display' })} onClick={() => openShell(QS.cast)}>
+                  <Glyph name="nf-md-cast" />
+                </button>
+                <button className="icon-btn" {...tip({ title: 'Project', hint: 'Duplicate or extend displays' })} onClick={() => openShell(QS.project)}>
+                  <Glyph name="nf-md-monitor_multiple" />
+                </button>
+                <button className="icon-btn" {...tip({ title: 'Quick Settings', hint: 'Airplane mode, night light, hotspot, nearby sharing, accessibility, brightness' })} onClick={() => openShell(QS.main)}>
+                  <Glyph name="nf-md-tune_vertical" />
+                </button>
+                <button className="icon-btn" {...tip('Notifications & calendar')} onClick={() => openShell(QS.notifications)}>
+                  <Glyph name="nf-md-bell_outline" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
