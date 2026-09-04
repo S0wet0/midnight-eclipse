@@ -323,3 +323,21 @@ body {
   font-size: 0.85em;
   text-shadow: var(--text-halo);
 }
+
+/* Player: prev/play/next and the track title. */
+.player {
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--accent-border);
+}
+
+.player-title {
+  max-width: 180px;
+  margin-left: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}

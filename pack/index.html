@@ -27,6 +27,7 @@
       cpu: { type: 'cpu' },
       date: { type: 'date', formatting: 'EEE d MMM, h:mm a' },
       komorebi: { type: 'komorebi' },
+      media: { type: 'media' },
       memory: { type: 'memory' },
       network: { type: 'network' },
       weather: { type: 'weather' },
@@ -65,6 +66,16 @@
     const runKomorebic = (...args) => run(KOMOREBIC, args);
 
     const formatGb = bytes => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+
+    // Wraps a provider method call (setVolume, togglePlayPause, tray
+    // clicks) so a rejected promise surfaces in the bar like shell errors.
+    function call(label, fn) {
+      try {
+        Promise.resolve(fn()).catch(err => reportError(`${label} failed: ${err}`));
+      } catch (err) {
+        reportError(`${label} failed: ${err}`);
+      }
+    }
 
     // Hover text for an element: content is a string or
     // { title, rows: [[label, value], ...], hint }, shown as a native tooltip.
@@ -222,6 +233,10 @@
 
       const audio = output.audio;
       const playback = audio?.defaultPlaybackDevice;
+      const media = output.media;
+      const session = media?.currentSession ?? media?.session ?? null;
+      const mediaLabel = session ? [session.artist, session.title].filter(Boolean).join(' – ') : '';
+
       const net = output.network;
       const netTip = net && {
         title: net.defaultInterface?.friendlyName ?? 'No connection',
@@ -321,6 +336,27 @@
 
           <div className="zone zone-end">
             <div className="panel status">
+              {session && (
+                <div className="player">
+                  <button className="icon-btn" {...tip('Previous track')} onClick={() => call('previous track', () => media.previous({ sessionId: session.sessionId }))}>
+                    <Glyph name="nf-md-skip_previous" />
+                  </button>
+                  <button className="icon-btn" {...tip(session.isPlaying ? 'Pause' : 'Play')} onClick={() => call('play/pause', () => media.togglePlayPause({ sessionId: session.sessionId }))}>
+                    <Glyph name={session.isPlaying ? 'nf-md-pause' : 'nf-md-play'} />
+                  </button>
+                  <button className="icon-btn" {...tip('Next track')} onClick={() => call('next track', () => media.next({ sessionId: session.sessionId }))}>
+                    <Glyph name="nf-md-skip_next" />
+                  </button>
+                  <span
+                    className="player-title"
+                    {...tip({
+                      title: session.title || 'Unknown track',
+                      rows: [session.artist && ['Artist', session.artist], session.albumTitle && ['Album', session.albumTitle]].filter(Boolean),
+                    })}
+                  >{mediaLabel}</span>
+                </div>
+              )}
+
               {net && (
                 <div className="stat readonly stat-net" {...tip(netTip)}>
                   <Glyph name={networkGlyph(net)} />
