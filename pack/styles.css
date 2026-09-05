@@ -132,6 +132,12 @@ body {
   padding-left: 8px;
 }
 
+.divider-after {
+  border-right: 1px solid var(--accent-border);
+  padding-right: 8px;
+  margin-right: 8px;
+}
+
 /* ------------------------------------------------------------- 4. start zone */
 
 .brand {
@@ -348,6 +354,26 @@ body {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+/* Tray drawer: tray icons behind a chevron. */
+.tray {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tray-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+
+  &:hover {
+    transform: scale(1.15);
+  }
 }
 
 /* Quick Settings shortcuts at the end of the status panel. */

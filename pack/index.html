@@ -30,6 +30,7 @@
       media: { type: 'media' },
       memory: { type: 'memory' },
       network: { type: 'network' },
+      systray: { type: 'systray' },
       weather: { type: 'weather' },
     });
 
@@ -94,6 +95,15 @@
       if (typeof content === 'string') return { title: content };
       const rows = (content.rows ?? []).map(([label, value]) => `${label}: ${value}`);
       return { title: [content.title, ...rows, content.hint].filter(Boolean).join('\n') };
+    }
+
+    // Tray hover forwarding is best-effort: many icons reject hover events
+    // ("Unable to send event to icon"), and hover fires continuously, so
+    // reporting these would keep the error indicator permanently lit.
+    function quiet(fn) {
+      try {
+        Promise.resolve(fn()).catch(() => {});
+      } catch {}
     }
 
     // komorebi's KomorebiWorkspace has no hasFocus/isDisplayed booleans —
@@ -170,6 +180,11 @@
       notifications: 'ms-actioncenter:',
     };
 
+    const TRAY_OPEN_KEY = 'midnight-eclipse-tray-open';
+    function loadTrayOpen() {
+      try { return localStorage.getItem(TRAY_OPEN_KEY) === 'true'; } catch { return false; }
+    }
+
     // ---------------------------------------------------------------- glyphs
     // Nerd Font glyph names for each reading. Levels count how many
     // thresholds a value passes, so each table reads low to high.
@@ -218,6 +233,7 @@
       // Latest data from every provider, refreshed on each emission.
       const [output, setOutput] = useState(() => providers.outputMap);
       const [lastError, setLastError] = useState(null);
+      const [trayOpen, setTrayOpen] = useState(loadTrayOpen);
       const [layoutMemory, setLayoutMemory] = useState(loadLayoutMemory);
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
       function toggleLayouts() {
@@ -233,6 +249,14 @@
         setLayoutMemory(prev => {
           const next = { ...prev, [workspaceName]: layout.id };
           try { localStorage.setItem(LAYOUT_MEMORY_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
+      }
+
+      function toggleTray() {
+        setTrayOpen(prev => {
+          const next = !prev;
+          try { localStorage.setItem(TRAY_OPEN_KEY, String(next)); } catch {}
           return next;
         });
       }
@@ -286,6 +310,7 @@
       const cpu = output.cpu;
       const battery = output.battery;
       const weather = output.weather;
+      const trayIcons = output.systray?.icons ?? [];
 
       const workspace = komorebi?.focusedWorkspace;
       const currentLayout = resolveLayout(workspace, layoutMemory);
@@ -388,6 +413,26 @@
                       rows: [session.artist && ['Artist', session.artist], session.albumTitle && ['Album', session.albumTitle]].filter(Boolean),
                     })}
                   >{mediaLabel}</span>
+                </div>
+              )}
+
+              {trayIcons.length > 0 && (
+                <div className="tray divider-after">
+                  {trayOpen && trayIcons.map(icon => (
+                    <img
+                      key={icon.id}
+                      className="tray-icon"
+                      src={icon.iconUrl}
+                      title={icon.tooltip}
+                      onClick={() => call('tray click', () => output.systray.onLeftClick(icon.id))}
+                      onContextMenu={e => { e.preventDefault(); call('tray right-click', () => output.systray.onRightClick(icon.id)); }}
+                      onMouseEnter={() => quiet(() => output.systray.onHoverEnter(icon.id))}
+                      onMouseLeave={() => quiet(() => output.systray.onHoverLeave(icon.id))}
+                    />
+                  ))}
+                  <button className="icon-btn tray-toggle" {...tip(trayOpen ? 'Hide tray icons' : `Show tray icons (${trayIcons.length})`)} onClick={toggleTray}>
+                    <Glyph name={trayOpen ? 'nf-md-chevron_right' : 'nf-md-chevron_left'} />
+                  </button>
                 </div>
               )}
 
