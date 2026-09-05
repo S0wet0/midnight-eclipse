@@ -79,22 +79,31 @@ body {
   box-shadow: var(--halo-lg);
 }
 
-/* Three columns: start zone, clock, end zone. */
+/* Three columns; the side ones are minmax(0, 1fr), not 1fr, so they stay
+   exactly equal whatever they contain and the clock stays centred (a plain
+   1fr column grows with its content). */
 .bar {
   height: 100%;
   padding: 4px 0.3vw;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
 }
 
 .zone {
   display: flex;
   align-items: center;
+  min-width: 0;
 }
 
+/* Clipped rather than allowed to run under the clock. The left padding
+   keeps a gap from the clock, matching the app list's margin. */
 .zone-end {
   justify-self: end;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding-left: 12px;
+  overflow: hidden;
 }
 
 /* ---------------------------------------------------------- 3. shared pieces */
