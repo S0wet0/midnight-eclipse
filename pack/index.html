@@ -180,6 +180,21 @@
       notifications: 'ms-actioncenter:',
     };
 
+    // Windows' own speaker and battery tray icons duplicate the bar's volume
+    // and battery stats. Zebar identifies a tray icon by its Windows GUID
+    // when it has one (else "hwnd:uid"), and Windows' system icons use the
+    // fixed 7820AE7x-23E3-4229-82C1-E41CB67D5B9C family.
+    //   ...73 = volume (documented); ...75 = power/battery (inferred from
+    //   the gap between network ...74 and action center ...76).
+    // Matching on the tooltip was tried first and never matched: these
+    // system icons don't appear to pass their tooltip text through.
+    const HIDDEN_TRAY_IDS = new Set([
+      '7820ae73-23e3-4229-82c1-e41cb67d5b9c', // volume
+      '7820ae75-23e3-4229-82c1-e41cb67d5b9c', // power / battery
+    ]);
+    const normalizeId = id => String(id ?? '').replace(/[{}]/g, '').toLowerCase();
+    const isHiddenTrayIcon = icon => HIDDEN_TRAY_IDS.has(normalizeId(icon.id));
+
     const TRAY_OPEN_KEY = 'midnight-eclipse-tray-open';
     function loadTrayOpen() {
       try { return localStorage.getItem(TRAY_OPEN_KEY) === 'true'; } catch { return false; }
@@ -310,7 +325,7 @@
       const cpu = output.cpu;
       const battery = output.battery;
       const weather = output.weather;
-      const trayIcons = output.systray?.icons ?? [];
+      const trayIcons = (output.systray?.icons ?? []).filter(icon => !isHiddenTrayIcon(icon));
 
       const workspace = komorebi?.focusedWorkspace;
       const currentLayout = resolveLayout(workspace, layoutMemory);
