@@ -1,0 +1,87 @@
+/* Tooltip window. Colour tokens (--panel-bg, --accent, ...) come from
+   styles.css, so the card follows the same light/dark switching as the bar. */
+
+html, body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* Absolutely positioned with max-content width so it can be measured at its
+   natural size even while the window is parked at 1x1 px. */
+#card {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: max-content;
+  max-width: 340px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--panel-bg);
+  border: 1px solid var(--accent-border-strong);
+  box-shadow: 0 0 10px var(--accent-border);
+  color: var(--text);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  user-select: none;
+}
+
+#card[hidden] {
+  display: none;
+}
+
+.tip-title {
+  font-weight: 600;
+  color: var(--accent);
+  text-shadow: 0 0 8px var(--accent-glow);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+/* Label/value rows, labels right-aligned into one column. */
+.tip-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  margin-top: 4px;
+}
+
+.tip-rows:first-child {
+  margin-top: 0;
+}
+
+.tip-key {
+  text-align: right;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.tip-val {
+  overflow-wrap: anywhere;
+}
+
+.tip-hint {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid var(--accent-border);
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.tip-hint:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* Error tooltips (the bar's ⚠ indicator). */
+#card.error {
+  border-color: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+}
+
+#card.error .tip-title {
+  color: var(--danger);
+  text-shadow: none;
+}

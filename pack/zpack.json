@@ -33,6 +33,30 @@
           { "program": "C:\\Program Files\\komorebi\\bin\\komorebic.exe", "argsRegex": "^(focus-workspace [0-8]|change-layout (bsp|columns|rows|vertical-stack|horizontal-stack|ultrawide-vertical-stack|grid|right-main-vertical-stack|scrolling))$" }
         ]
       }
+    },
+    {
+      "name": "tooltip",
+      "htmlPath": "./tooltip.html",
+      "includeFiles": ["**/**"],
+      "presets": [
+        {
+          "name": "default",
+          "anchor": "top_left",
+          "width": "1px",
+          "height": "1px",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "monitorSelection": { "type": "primary" },
+          "dockToEdge": { "enabled": false, "edge": null, "windowMargin": "0px" }
+        }
+      ],
+      "transparent": true,
+      "focused": false,
+      "resizable": false,
+      "shownInTaskbar": false,
+      "zOrder": "top_most",
+      "caching": { "defaultDuration": 604800, "rules": [] },
+      "privileges": { "shellCommands": [] }
     }
   ]
 }

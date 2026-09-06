@@ -19,6 +19,8 @@
     // Pinned to the installed Zebar app's version. The v2 client lacked
     // audio.setMute and the systray provider entirely.
     import * as zebar from 'https://esm.sh/zebar@3.3.1';
+    // Same @tauri-apps/api version zebar@3.3.1 bundles, so both share one copy.
+    import { emit } from 'https://esm.sh/@tauri-apps/api@2.0.2/event';
 
     // Zebar data sources, alphabetical.
     const providers = zebar.createProviderGroup({
@@ -88,13 +90,62 @@
       }
     }
 
-    // Hover text for an element: content is a string or
-    // { title, rows: [[label, value], ...], hint }, shown as a native tooltip.
+    // Styled tooltips, rendered by the separate `tooltip` widget
+    // (tooltip.html): native `title` tooltips can't be styled, and this
+    // 44px window clips anything drawn below it. `tip(content)` returns the
+    // hover props for an element; content is a string or
+    // { title, rows: [[label, value], ...], hint, tone: 'error' }.
+    const TIP_EVENT = 'midnight-eclipse:tooltip';
+    const TIP_DELAY = 350;
+    let tipTimer = null;
+    let tipTarget = null;
+    let tipVisible = false;
+    let tipHiddenAt = 0;
+
+    async function showTip(target, content) {
+      try {
+        const win = zebar.currentWidget().tauriWindow;
+        const [pos, size, scale] = await Promise.all([win.outerPosition(), win.outerSize(), win.scaleFactor()]);
+        if (tipTarget !== target) return; // pointer already left
+        const r = target.getBoundingClientRect();
+        const barX = pos.x / scale;
+        tipVisible = true;
+        await emit(TIP_EVENT, {
+          show: true,
+          tip: content,
+          anchor: { x: barX + r.left, width: r.width, barBottom: pos.y / scale + size.height / scale },
+          bounds: { left: barX, right: barX + size.width / scale },
+        });
+      } catch (err) {
+        console.error('tooltip failed', err);
+      }
+    }
+
+    function hideTip() {
+      clearTimeout(tipTimer);
+      tipTarget = null;
+      if (!tipVisible) return;
+      tipVisible = false;
+      tipHiddenAt = Date.now();
+      emit(TIP_EVENT, { show: false }).catch(() => {});
+    }
+
     function tip(content) {
       if (!content) return {};
-      if (typeof content === 'string') return { title: content };
-      const rows = (content.rows ?? []).map(([label, value]) => `${label}: ${value}`);
-      return { title: [content.title, ...rows, content.hint].filter(Boolean).join('\n') };
+      const normalized = typeof content === 'string' ? { title: content } : content;
+      return {
+        'aria-label': normalized.title,
+        onMouseEnter: e => {
+          const target = e.currentTarget;
+          clearTimeout(tipTimer);
+          tipTarget = target;
+          // Moving between items while a tooltip is up switches instantly.
+          const quick = tipVisible || Date.now() - tipHiddenAt < 400;
+          tipTimer = setTimeout(() => showTip(target, normalized), quick ? 0 : TIP_DELAY);
+        },
+        onMouseLeave: hideTip,
+        onMouseDown: hideTip,
+      };
     }
 
     // Tray hover forwarding is best-effort: many icons reject hover events
@@ -433,18 +484,23 @@
 
               {trayIcons.length > 0 && (
                 <div className="tray divider-after">
-                  {trayOpen && trayIcons.map(icon => (
-                    <img
-                      key={icon.id}
-                      className="tray-icon"
-                      src={icon.iconUrl}
-                      title={icon.tooltip}
-                      onClick={() => call('tray click', () => output.systray.onLeftClick(icon.id))}
-                      onContextMenu={e => { e.preventDefault(); call('tray right-click', () => output.systray.onRightClick(icon.id)); }}
-                      onMouseEnter={() => quiet(() => output.systray.onHoverEnter(icon.id))}
-                      onMouseLeave={() => quiet(() => output.systray.onHoverLeave(icon.id))}
-                    />
-                  ))}
+                  {trayOpen && trayIcons.map(icon => {
+                    // Styled tooltip plus the hover forwarding tray apps rely on.
+                    const t = tip({ title: icon.tooltip || 'Tray icon', rows: [['id', String(icon.id)]], hint: 'Click: app action · Right-click: menu' });
+                    return (
+                      <img
+                        key={icon.id}
+                        className="tray-icon"
+                        src={icon.iconUrl}
+                        aria-label={t['aria-label']}
+                        onClick={() => call('tray click', () => output.systray.onLeftClick(icon.id))}
+                        onContextMenu={e => { e.preventDefault(); hideTip(); call('tray right-click', () => output.systray.onRightClick(icon.id)); }}
+                        onMouseDown={t.onMouseDown}
+                        onMouseEnter={e => { t.onMouseEnter(e); quiet(() => output.systray.onHoverEnter(icon.id)); }}
+                        onMouseLeave={e => { t.onMouseLeave(e); quiet(() => output.systray.onHoverLeave(icon.id)); }}
+                      />
+                    );
+                  })}
                   <button className="icon-btn tray-toggle" {...tip(trayOpen ? 'Hide tray icons' : `Show tray icons (${trayIcons.length})`)} onClick={toggleTray}>
                     <Glyph name={trayOpen ? 'nf-md-chevron_right' : 'nf-md-chevron_left'} />
                   </button>

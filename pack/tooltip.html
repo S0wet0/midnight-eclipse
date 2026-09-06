@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <!-- styles.css for the shared colour tokens (light/dark) and icon font. -->
+  <link rel="stylesheet" type="text/css" href="./styles.css" />
+  <link rel="stylesheet" type="text/css" href="./tooltip.css" />
+</head>
+
+<body>
+  <div id="card" hidden></div>
+
+  <script type="module">
+    // Styled tooltips for the bar. Native `title` tooltips can't be styled,
+    // and the bar's 44px window clips anything drawn below it, so tooltips
+    // live in this separate click-through window.
+    import { listen } from 'https://esm.sh/@tauri-apps/api@2.0.2/event';
+    import { getCurrentWindow, LogicalPosition, LogicalSize } from 'https://esm.sh/@tauri-apps/api@2.0.2/window';
+
+    const EVENT = 'midnight-eclipse:tooltip';
+    const MARGIN = 12;  // room around the card for its glow
+    const GAP = 4;      // space between the bar and the card
+
+    const win = getCurrentWindow();
+    const card = document.getElementById('card');
+    let generation = 0;
+    let hideTimer = null;
+
+    await win.setIgnoreCursorEvents(true);
+    await win.hide();
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    // tip = { title, rows: [[label, value], ...], hint, tone: 'error' }
+    function render(tip) {
+      card.replaceChildren();
+      card.classList.toggle('error', tip.tone === 'error');
+      if (tip.title) card.append(el('div', 'tip-title', tip.title));
+      if (tip.rows?.length) {
+        const rows = el('div', 'tip-rows');
+        for (const [label, value] of tip.rows) rows.append(el('span', 'tip-key', label), el('span', 'tip-val', value));
+        card.append(rows);
+      }
+      if (tip.hint) card.append(el('div', 'tip-hint', tip.hint));
+    }
+
+    await listen(EVENT, async ({ payload }) => {
+      const mine = ++generation;
+      clearTimeout(hideTimer);
+
+      if (!payload.show) {
+        // Short delay so moving between adjacent items doesn't flicker.
+        hideTimer = setTimeout(() => { if (mine === generation) win.hide(); }, 90);
+        return;
+      }
+
+      render(payload.tip);
+      card.hidden = false;
+      await new Promise(requestAnimationFrame);
+      if (mine !== generation) return;
+
+      const box = card.getBoundingClientRect();
+      const width = Math.ceil(box.width) + MARGIN * 2;
+      const height = Math.ceil(box.height) + MARGIN * 2;
+
+      // Centre under the hovered item, just below the bar, kept on-screen.
+      const { anchor, bounds } = payload;
+      let x = anchor.x + anchor.width / 2 - width / 2;
+      x = Math.max(bounds.left, Math.min(x, bounds.right - width));
+      const y = anchor.barBottom + GAP - MARGIN;
+
+      await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)));
+      await win.setSize(new LogicalSize(width, height));
+      await win.show();
+    });
+  </script>
+</body>
+
+</html>
