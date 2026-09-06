@@ -15,6 +15,11 @@
     // Styled tooltips for the bar. Native `title` tooltips can't be styled,
     // and the bar's 44px window clips anything drawn below it, so tooltips
     // live in this separate click-through window.
+    //
+    // The window is never hidden or shown: Tauri's show() activates the
+    // window, which would steal keyboard focus on every tooltip. Instead it
+    // stays "shown" and, when idle, is emptied and shrunk to 1x1 px; to
+    // display a tooltip it's only moved and resized (moves don't activate).
     import { listen } from 'https://esm.sh/@tauri-apps/api@2.0.2/event';
     import { getCurrentWindow, LogicalPosition, LogicalSize } from 'https://esm.sh/@tauri-apps/api@2.0.2/window';
 
@@ -28,7 +33,13 @@
     let hideTimer = null;
 
     await win.setIgnoreCursorEvents(true);
-    await win.hide();
+    await park();
+
+    async function park() {
+      card.hidden = true;
+      card.replaceChildren();
+      await win.setSize(new LogicalSize(1, 1));
+    }
 
     function el(tag, className, text) {
       const node = document.createElement(tag);
@@ -56,7 +67,7 @@
 
       if (!payload.show) {
         // Short delay so moving between adjacent items doesn't flicker.
-        hideTimer = setTimeout(() => { if (mine === generation) win.hide(); }, 90);
+        hideTimer = setTimeout(() => { if (mine === generation) park(); }, 90);
         return;
       }
 
@@ -75,9 +86,11 @@
       x = Math.max(bounds.left, Math.min(x, bounds.right - width));
       const y = anchor.barBottom + GAP - MARGIN;
 
+      // Move first (while still 1x1/invisible), then grow: no flash at the
+      // previous location.
       await win.setPosition(new LogicalPosition(Math.round(x), Math.round(y)));
+      if (mine !== generation) return;
       await win.setSize(new LogicalSize(width, height));
-      await win.show();
     });
   </script>
 </body>
