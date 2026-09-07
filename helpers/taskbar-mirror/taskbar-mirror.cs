@@ -1,9 +1,9 @@
 // taskbar-mirror: lets the Zebar bar mirror the native Windows taskbar.
 //
-//   taskbar-mirror.exe watch       Runs until stdin closes. Every 600ms
-//                                  prints one JSON line: [{ name, appId,
-//                                  windows, active, icon }] in taskbar
-//                                  order.
+//   taskbar-mirror.exe watch       Runs until stdin closes. Whenever the
+//                                  taskbar's app buttons change, prints one
+//                                  JSON line: [{ name, appId, windows,
+//                                  active, icon }] in taskbar order.
 //   taskbar-mirror.exe press <0-9> Sends Win+N (Win+0 = 10th button), so a
 //                                  click in the bar does exactly what the
 //                                  taskbar/Win+N does: activate, minimize if
@@ -58,6 +58,8 @@ static class TaskbarMirror
         var stdinClosed = new ManualResetEvent(false);
         new Thread(() => { try { while (Console.In.Read() != -1) { } } catch { } stdinClosed.Set(); }) { IsBackground = true }.Start();
 
+        var iconCache = new Dictionary<string, string>();
+        string last = null;
         string lastActiveAppId = null;
         while (!stdinClosed.WaitOne(0))
         {
@@ -66,8 +68,8 @@ static class TaskbarMirror
                 var buttons = ReadTaskbarButtons();
                 string active = ForegroundAppId(buttons);
                 if (active != null) lastActiveAppId = active; // keep last real app while the bar itself has focus
-                Console.Out.WriteLine(ToJson(buttons, lastActiveAppId));
-                Console.Out.Flush();
+                string json = ToJson(buttons, lastActiveAppId, iconCache);
+                if (json != last) { Console.Out.WriteLine(json); Console.Out.Flush(); last = json; }
             }
             catch (Exception e) { Console.Error.WriteLine("watch error: " + e.Message); }
             stdinClosed.WaitOne(600);
@@ -165,13 +167,14 @@ static class TaskbarMirror
         finally { CloseHandle(handle); }
     }
 
-    static string ToJson(List<Button> buttons, string activeAppId)
+    static string ToJson(List<Button> buttons, string activeAppId, Dictionary<string, string> iconCache)
     {
         var sb = new StringBuilder("[");
         for (int i = 0; i < buttons.Count; i++)
         {
             var b = buttons[i];
-            string icon = IconDataUrl(b.AppId);
+            string icon;
+            if (!iconCache.TryGetValue(b.AppId, out icon)) { icon = IconDataUrl(b.AppId); iconCache[b.AppId] = icon; }
             if (i > 0) sb.Append(',');
             sb.Append("{\"name\":").Append(Quote(b.Name))
               .Append(",\"appId\":").Append(Quote(b.AppId))
