@@ -45,7 +45,7 @@
     // whose PATH can predate the komorebi install. Each program string
     // here must match a zpack.json privileges entry character-for-character
     // (Zebar compares them with ==).
-    const KOMOREBIC = 'C:\\Program Files\\komorebi\\bin\\komorebic.exe';
+    const KOMOREBIC = '__KOMOREBIC__';
 
     // Failures otherwise land only in the widget's devtools console,
     // which is invisible in normal use — surface them in the bar instead.
@@ -202,6 +202,49 @@
       try { return JSON.parse(localStorage.getItem(LAYOUT_MEMORY_KEY) ?? '{}'); } catch { return {}; }
     }
 
+    // The window list mirrors the native taskbar (helpers/taskbar-mirror):
+    // same buttons, same order, same icons. So Windows' own Win+1..9 lines up
+    // with the icons, and clicking icon N sends Win+N, making Windows do
+    // exactly what the taskbar would (activate / minimize / cycle a group).
+    const TASKBAR_MIRROR = '__HELPERS__\\taskbar-mirror.exe';
+
+    // Keeps `taskbar-mirror watch` running for the bar's lifetime; it prints a
+    // JSON line whenever the taskbar changes. Restarts it if it dies.
+    function useTaskbar() {
+      const [buttons, setButtons] = useState([]);
+      useEffect(() => {
+        let proc = null;
+        let stopped = false;
+        let buffer = '';
+        let retry;
+        async function start() {
+          try {
+            proc = await zebar.shellSpawn(TASKBAR_MIRROR, ['watch']);
+            proc.onStdout(chunk => {
+              buffer += chunk;
+              const lines = buffer.split(/\r?\n/);
+              buffer = lines.pop();
+              const latest = lines.filter(Boolean).pop();
+              if (latest) {
+                try { setButtons(JSON.parse(latest)); } catch (err) { reportError(`taskbar mirror sent bad data: ${err}`); }
+              }
+            });
+            proc.onExit(status => {
+              if (stopped) return;
+              reportError(`taskbar mirror exited (code ${status.exitCode}); restarting`);
+              retry = setTimeout(start, 3000);
+            });
+          } catch (err) {
+            reportError(`taskbar mirror failed to start: ${err}`);
+            retry = setTimeout(start, 5000);
+          }
+        }
+        start();
+        return () => { stopped = true; clearTimeout(retry); proc?.kill(); };
+      }, []);
+      return buttons;
+    }
+
     const LAYOUTS_OPEN_KEY = 'midnight-eclipse-layouts-open';
     function loadLayoutsOpen() {
       try { return localStorage.getItem(LAYOUTS_OPEN_KEY) === 'true'; } catch { return false; }
@@ -302,6 +345,7 @@
       const [trayOpen, setTrayOpen] = useState(loadTrayOpen);
       const [layoutMemory, setLayoutMemory] = useState(loadLayoutMemory);
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
+      const taskbar = useTaskbar();
       function toggleLayouts() {
         setLayoutsOpen(prev => {
           const next = !prev;
@@ -439,6 +483,29 @@
                 <button className="icon-btn" {...tip(layoutsOpen ? 'Hide layouts' : 'Show all layouts')} onClick={toggleLayouts}>
                   <Glyph name={layoutsOpen ? 'nf-md-chevron_left' : 'nf-md-chevron_right'} />
                 </button>
+              </div>
+            )}
+
+            {taskbar.length > 0 && (
+              <div className="app-list divider-before">
+                {taskbar.map((app, i) => {
+                  // Win+1..9, then Win+0 for the 10th; beyond that there's
+                  // no shortcut, so the icon is display-only.
+                  const key = i < 9 ? String(i + 1) : i === 9 ? '0' : null;
+                  const running = app.windows > 0;
+                  return (
+                    <button
+                      key={app.appId}
+                      className={['app-btn', app.active && 'is-front', !running && 'is-pinned'].filter(Boolean).join(' ')}
+                      {...tip({ title: app.name, rows: [['Windows', running ? String(app.windows) : 'pinned, not running']], hint: key ? `Click or Win+${key}` : 'No shortcut beyond the 10th icon' })}
+                      disabled={!key}
+                      onClick={() => key && run(TASKBAR_MIRROR, ['press', key])}
+                    >
+                      {app.icon ? <img className="app-icon" src={app.icon} alt="" /> : <Glyph name="nf-md-application" />}
+                      {app.windows > 1 && <span className="app-count">{app.windows}</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

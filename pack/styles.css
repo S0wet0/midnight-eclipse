@@ -219,6 +219,75 @@ body {
   }
 }
 
+/* Mirror of the native taskbar's app buttons: icons only, taskbar order. */
+.app-list {
+  --app-btn-w: 32px;
+  --app-gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: var(--app-gap);
+  margin-left: 8px;
+  margin-right: 12px;
+}
+
+.app-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--app-btn-w);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--accent-hover-bg);
+  }
+
+  /* The app currently in front, like the taskbar's active indicator. */
+  &.is-front {
+    background: var(--panel-bg);
+    border-color: var(--accent-border-strong);
+    box-shadow: var(--halo-sm);
+  }
+
+  /* Pinned but not running. */
+  &.is-pinned {
+    opacity: 0.45;
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.app-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+/* Number of open windows, for apps grouped under one taskbar button. */
+.app-count {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  min-width: 10px;
+  padding: 0 2px;
+  border-radius: 5px;
+  font-size: 8px;
+  line-height: 10px;
+  text-align: center;
+  color: var(--text);
+  background: var(--accent-hover-bg);
+  border: 1px solid var(--accent-border-strong);
+}
+
 /* ------------------------------------------------------------ 5. clock panel */
 
 .clock {
