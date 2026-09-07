@@ -37,6 +37,9 @@ using System.Windows.Automation;
 
 static class TaskbarMirror
 {
+    // STA: UIA against the taskbar's XAML island returns no elements from an
+    // MTA thread (the C# default); PowerShell, which is STA, sees them.
+    [STAThread]
     static int Main(string[] args)
     {
         if (args.Length == 1 && args[0] == "watch") { Watch(); return 0; }
@@ -315,14 +318,27 @@ static class TaskbarMirror
     // ---------------------------------------------------------------- win32
 
     delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr lParam);
 
+    // Zebar's systray provider creates its own hidden "Shell_TrayWnd" window
+    // (so apps send it their tray-icon messages), and FindWindow can return
+    // that decoy. Pick the Shell_TrayWnd that actually hosts the taskbar's
+    // XAML island.
     static IntPtr FindTaskbarXamlHost()
     {
-        IntPtr tray = FindWindow("Shell_TrayWnd", null);
-        return tray == IntPtr.Zero ? IntPtr.Zero : FindDescendant(tray, "Windows.UI.Composition.DesktopWindowContentBridge");
+        IntPtr host = IntPtr.Zero;
+        var name = new StringBuilder(256);
+        EnumWindows((h, l) =>
+        {
+            name.Clear();
+            GetClassName(h, name, name.Capacity);
+            if (name.ToString() != "Shell_TrayWnd") return true;
+            host = FindDescendant(h, "Windows.UI.Composition.DesktopWindowContentBridge");
+            return host == IntPtr.Zero;
+        }, IntPtr.Zero);
+        return host;
     }
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string className, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
 
     // The XAML island host isn't a direct child of Shell_TrayWnd, so search
