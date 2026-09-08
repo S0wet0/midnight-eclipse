@@ -208,10 +208,42 @@
     // exactly what the taskbar would (activate / minimize / cycle a group).
     const TASKBAR_MIRROR = '__HELPERS__\\taskbar-mirror.exe';
 
+    // The taskbar shows only the displayed workspace's windows: komorebi
+    // cloaks the others, but the taskbar would still list them. These are the
+    // windows on every workspace that isn't the one shown on its monitor;
+    // taskbar-mirror takes them off the taskbar (and puts back any that
+    // leave the list). Minimized windows aren't on any komorebi workspace, so
+    // they always stay on the taskbar, as usual.
+    function hiddenWorkspaceHwnds(komorebi) {
+      const hwnds = new Set();
+      for (const monitor of komorebi?.allMonitors ?? []) {
+        (monitor.workspaces ?? []).forEach((workspace, i) => {
+          if (i === monitor.focusedWorkspaceIndex) return;
+          const windows = [
+            ...(workspace.tilingContainers ?? []).flatMap(c => c.windows ?? []),
+            ...(workspace.monocleContainer?.windows ?? []),
+            ...(workspace.floatingWindows ?? []),
+            workspace.maximizedWindow,
+          ];
+          for (const w of windows) if (w?.hwnd) hwnds.add(w.hwnd);
+        });
+      }
+      return [...hwnds].sort((a, b) => a - b);
+    }
+
     // Keeps `taskbar-mirror watch` running for the bar's lifetime; it prints a
     // JSON line whenever the taskbar changes. Restarts it if it dies.
-    function useTaskbar() {
+    // `hideLine` ("hide <hwnd>,...") is written to its stdin whenever it
+    // changes, and again to each new instance.
+    function useTaskbar(hideLine) {
       const [buttons, setButtons] = useState([]);
+      const procRef = useRef(null);
+      const hideRef = useRef(hideLine);
+      hideRef.current = hideLine;
+      const send = line => {
+        try { procRef.current?.write(line + '\n'); } catch (err) { reportError(`taskbar mirror: couldn't send window list: ${err}`); }
+      };
+      useEffect(() => send(hideLine), [hideLine]);
       useEffect(() => {
         let proc = null;
         let stopped = false;
@@ -220,6 +252,8 @@
         async function start() {
           try {
             proc = await zebar.shellSpawn(TASKBAR_MIRROR, ['watch']);
+            procRef.current = proc;
+            send(hideRef.current);
             proc.onStdout(chunk => {
               buffer += chunk;
               const lines = buffer.split(/\r?\n/);
@@ -230,6 +264,7 @@
               }
             });
             proc.onExit(status => {
+              if (procRef.current === proc) procRef.current = null;
               if (stopped) return;
               reportError(`taskbar mirror exited (code ${status.exitCode}); restarting`);
               retry = setTimeout(start, 3000);
@@ -240,7 +275,9 @@
           }
         }
         start();
-        return () => { stopped = true; clearTimeout(retry); proc?.kill(); };
+        // A killed helper can't put hidden windows back itself; the next
+        // instance does, from the state file it keeps.
+        return () => { stopped = true; clearTimeout(retry); procRef.current = null; proc?.kill(); };
       }, []);
       return buttons;
     }
@@ -345,7 +382,8 @@
       const [trayOpen, setTrayOpen] = useState(loadTrayOpen);
       const [layoutMemory, setLayoutMemory] = useState(loadLayoutMemory);
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
-      const taskbar = useTaskbar();
+      const hideLine = 'hide ' + hiddenWorkspaceHwnds(output.komorebi).join(',');
+      const taskbar = useTaskbar(hideLine);
       const windowsRef = useRef(null);
       const activeAppId = taskbar.find(b => b.active)?.appId;
 

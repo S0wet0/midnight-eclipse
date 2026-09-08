@@ -4,6 +4,15 @@
 //                                  taskbar's app buttons change, prints one
 //                                  JSON line: [{ name, appId, windows,
 //                                  active, icon }] in taskbar order.
+//                                  Reads lines from stdin:
+//                                    hide <hwnd>,<hwnd>,...   (or "hide")
+//                                  the complete set of windows to keep OFF
+//                                  the taskbar (the bar sends the windows on
+//                                  komorebi workspaces that aren't displayed).
+//                                  Windows dropped from the set, and all of
+//                                  them when stdin closes, are put back.
+//   taskbar-mirror.exe restore     Puts back every window a killed `watch`
+//                                  left off the taskbar (from its state file).
 //   taskbar-mirror.exe press <0-9> Sends Win+N (Win+0 = 10th button), so a
 //                                  click in the bar does exactly what the
 //                                  taskbar/Win+N does: activate, minimize if
@@ -20,6 +29,12 @@
 //   hence `press` sends Win+N instead.
 // - Icons come from the shell item "shell:AppsFolder\<AppUserModelID>", the
 //   same identity the taskbar uses, via IShellItemImageFactory.
+// - Per-workspace taskbar: komorebi cloaks the windows of hidden workspaces,
+//   but the taskbar still lists cloaked windows. ITaskbarList::DeleteTab
+//   removes one window's entry (a group just shows one window fewer) and
+//   AddTab puts it back; verified on this machine. Because the bar's icons
+//   are read from the taskbar, they follow automatically, and Win+1..9
+//   counts only the displayed workspace's apps.
 //
 // Build with build.ps1 (Windows' built-in .NET Framework compiler).
 // Exit codes: 0 ok, 2 usage.
@@ -44,9 +59,10 @@ static class TaskbarMirror
     {
         if (args.Length == 1 && args[0] == "watch") { Watch(); return 0; }
         if (args.Length == 1 && args[0] == "debug") { Debug(); return 0; }
+        if (args.Length == 1 && args[0] == "restore") { new HiddenTabs().RestoreAll(); return 0; }
         int n;
         if (args.Length == 2 && args[0] == "press" && int.TryParse(args[1], out n) && n >= 0 && n <= 9) { PressWinDigit(n); return 0; }
-        Console.Error.WriteLine("usage: taskbar-mirror.exe watch | press <0-9>");
+        Console.Error.WriteLine("usage: taskbar-mirror.exe watch | press <0-9> | restore");
         return 2;
     }
 
@@ -55,24 +71,174 @@ static class TaskbarMirror
     static void Watch()
     {
         // Exit when the bar (our parent) goes away: it holds our stdin open.
+        // Only the latest "hide" line matters (each carries the full set).
         var stdinClosed = new ManualResetEvent(false);
-        new Thread(() => { try { while (Console.In.Read() != -1) { } } catch { } stdinClosed.Set(); }) { IsBackground = true }.Start();
-
-        var iconCache = new Dictionary<string, string>();
-        string last = null;
-        string lastActiveAppId = null;
-        while (!stdinClosed.WaitOne(0))
+        var hideArrived = new AutoResetEvent(false);
+        string pendingHide = null;
+        var pendingLock = new object();
+        new Thread(() =>
         {
             try
             {
-                var buttons = ReadTaskbarButtons();
-                string active = ForegroundAppId(buttons);
-                if (active != null) lastActiveAppId = active; // keep last real app while the bar itself has focus
-                string json = ToJson(buttons, lastActiveAppId, iconCache);
-                if (json != last) { Console.Out.WriteLine(json); Console.Out.Flush(); last = json; }
+                string line;
+                while ((line = Console.In.ReadLine()) != null)
+                {
+                    line = line.Trim();
+                    if (line != "hide" && !line.StartsWith("hide ")) continue;
+                    lock (pendingLock) pendingHide = line.Substring(4).Trim();
+                    hideArrived.Set();
+                }
             }
-            catch (Exception e) { Console.Error.WriteLine("watch error: " + e.Message); }
-            stdinClosed.WaitOne(600);
+            catch { }
+            stdinClosed.Set();
+        }) { IsBackground = true }.Start();
+
+        var tabs = new HiddenTabs();
+        var iconCache = new Dictionary<string, string>();
+        string last = null;
+        string lastActiveAppId = null;
+        DateTime lastReassert = DateTime.UtcNow;
+        try
+        {
+            while (!stdinClosed.WaitOne(0))
+            {
+                try
+                {
+                    string hide;
+                    lock (pendingLock) { hide = pendingHide; pendingHide = null; }
+                    if (hide != null)
+                    {
+                        tabs.Apply(ParseHwnds(hide));
+                        Thread.Sleep(150); // the taskbar updates its buttons asynchronously
+                    }
+                    // The taskbar re-adds a deleted window's button on its own
+                    // at times (e.g. Explorer restarting), so re-delete regularly.
+                    if ((DateTime.UtcNow - lastReassert).TotalSeconds >= 2) { tabs.Reassert(); lastReassert = DateTime.UtcNow; }
+
+                    var buttons = ReadTaskbarButtons();
+                    string active = ForegroundAppId(buttons);
+                    if (active != null) lastActiveAppId = active; // keep last real app while the bar itself has focus
+                    string json = ToJson(buttons, lastActiveAppId, iconCache);
+                    if (json != last) { Console.Out.WriteLine(json); Console.Out.Flush(); last = json; }
+                }
+                catch (Exception e) { Console.Error.WriteLine("watch error: " + e.Message); }
+                WaitHandle.WaitAny(new WaitHandle[] { stdinClosed, hideArrived }, 600);
+            }
+        }
+        finally { tabs.RestoreAll(); }
+    }
+
+    static HashSet<long> ParseHwnds(string list)
+    {
+        var result = new HashSet<long>();
+        foreach (string part in list.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            long h;
+            if (long.TryParse(part, out h) && h > 0) result.Add(h);
+        }
+        return result;
+    }
+
+    // ------------------------------------------------------ hidden tabs
+
+    [ComImport, Guid("56FDF342-FD6D-11d0-958A-006097C9A090"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ITaskbarList
+    {
+        [PreserveSig] int HrInit();
+        [PreserveSig] int AddTab(IntPtr hwnd);
+        [PreserveSig] int DeleteTab(IntPtr hwnd);
+        [PreserveSig] int ActivateTab(IntPtr hwnd);
+        [PreserveSig] int SetActiveAlt(IntPtr hwnd);
+    }
+    [ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090")] class TaskbarListClass { }
+
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+
+    // The windows this process has taken off the taskbar. Saved to a file so
+    // that if this process is killed (no chance to restore), the next
+    // instance still knows to put them back. Each entry records the owning
+    // process id too, so a window handle reused by another window after a
+    // reboot or app restart is never touched.
+    class HiddenTabs
+    {
+        static readonly string StatePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "midnight-eclipse", "taskbar-hidden.txt");
+
+        readonly ITaskbarList list;
+        readonly Dictionary<long, uint> hidden = new Dictionary<long, uint>(); // hwnd -> pid when hidden
+
+        public HiddenTabs()
+        {
+            list = (ITaskbarList)new TaskbarListClass();
+            list.HrInit();
+            try
+            {
+                if (File.Exists(StatePath))
+                    foreach (string line in File.ReadAllLines(StatePath))
+                    {
+                        string[] p = line.Split(' ');
+                        long h; uint pid;
+                        if (p.Length == 2 && long.TryParse(p[0], out h) && uint.TryParse(p[1], out pid) && Alive(h, pid)) hidden[h] = pid;
+                    }
+            }
+            catch (Exception e) { Console.Error.WriteLine("could not read " + StatePath + ": " + e.Message); }
+        }
+
+        static bool Alive(long hwnd, uint pid)
+        {
+            IntPtr h = new IntPtr(hwnd);
+            uint owner;
+            return IsWindow(h) && GetWindowThreadProcessId(h, out owner) != 0 && owner == pid;
+        }
+
+        public void Apply(HashSet<long> want)
+        {
+            foreach (long h in new List<long>(hidden.Keys))
+                if (!want.Contains(h))
+                {
+                    if (Alive(h, hidden[h])) list.AddTab(new IntPtr(h));
+                    hidden.Remove(h);
+                }
+            foreach (long h in want)
+            {
+                if (hidden.ContainsKey(h)) continue;
+                IntPtr hwnd = new IntPtr(h);
+                uint pid;
+                if (!IsWindow(hwnd) || GetWindowThreadProcessId(hwnd, out pid) == 0) continue;
+                list.DeleteTab(hwnd);
+                hidden[h] = pid;
+            }
+            Save();
+        }
+
+        public void Reassert()
+        {
+            bool pruned = false;
+            foreach (long h in new List<long>(hidden.Keys))
+            {
+                if (Alive(h, hidden[h])) list.DeleteTab(new IntPtr(h));
+                else { hidden.Remove(h); pruned = true; }
+            }
+            if (pruned) Save();
+        }
+
+        public void RestoreAll()
+        {
+            try { Apply(new HashSet<long>()); }
+            catch (Exception e) { Console.Error.WriteLine("restore error: " + e.Message); }
+        }
+
+        void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(StatePath));
+                var lines = new List<string>();
+                foreach (var kv in hidden) lines.Add(kv.Key + " " + kv.Value);
+                File.WriteAllLines(StatePath, lines.ToArray());
+            }
+            catch (Exception e) { Console.Error.WriteLine("could not write " + StatePath + ": " + e.Message); }
         }
     }
 
