@@ -21,6 +21,14 @@
     import * as zebar from 'https://esm.sh/zebar@3.3.1';
     // Same @tauri-apps/api version zebar@3.3.1 bundles, so both share one copy.
     import { emit } from 'https://esm.sh/@tauri-apps/api@2.0.2/event';
+    import { invoke } from 'https://esm.sh/@tauri-apps/api@2.0.2/core';
+
+    // zebar@3.3.1 bug: ShellProcess.write() and .kill() invoke the desktop
+    // commands with `{ processId }`, but shell_write/shell_kill take `pid`, so
+    // Tauri rejects every call (asynchronously, so it's easy to miss). Call
+    // the commands directly with the argument name they expect.
+    const shellWrite = (proc, data) => invoke('shell_write', { pid: proc.processId, buffer: data });
+    const shellKill = proc => invoke('shell_kill', { pid: proc.processId });
 
     // Zebar data sources, alphabetical.
     const providers = zebar.createProviderGroup({
@@ -241,7 +249,9 @@
       const hideRef = useRef(hideLine);
       hideRef.current = hideLine;
       const send = line => {
-        try { procRef.current?.write(line + '\n'); } catch (err) { reportError(`taskbar mirror: couldn't send window list: ${err}`); }
+        const proc = procRef.current;
+        if (!proc) return;
+        shellWrite(proc, line + '\n').catch(err => reportError(`taskbar mirror: couldn't send window list: ${err}`));
       };
       useEffect(() => send(hideLine), [hideLine]);
       useEffect(() => {
@@ -277,7 +287,7 @@
         start();
         // A killed helper can't put hidden windows back itself; the next
         // instance does, from the state file it keeps.
-        return () => { stopped = true; clearTimeout(retry); procRef.current = null; proc?.kill(); };
+        return () => { stopped = true; clearTimeout(retry); procRef.current = null; if (proc) shellKill(proc).catch(() => {}); };
       }, []);
       return buttons;
     }
