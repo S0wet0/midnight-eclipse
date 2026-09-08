@@ -219,15 +219,34 @@ body {
   }
 }
 
-/* Mirror of the native taskbar's app buttons: icons only, taskbar order. */
+/* Mirror of the native taskbar's app buttons: icons only, taskbar order.
+   Scrolls sideways (wheel mapped in JS) instead of clipping when it runs out
+   of room; the scrollbar is hidden since it would eat the bar's height. */
 .app-list {
   --app-btn-w: 32px;
   --app-gap: 4px;
   display: flex;
   align-items: center;
   gap: var(--app-gap);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto hidden;
+  scrollbar-width: none;
   margin-left: 8px;
+  /* keeps overflowing icons from sitting flush against the clock */
   margin-right: 12px;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* While the layout drawer is open, at most 4 icons show; the rest are
+     reached by scrolling, so the list never runs into the clock.
+     content-box sizing: the width excludes the list's own padding/border. */
+  &.is-capped {
+    flex: 0 1 auto;
+    max-width: calc(4 * var(--app-btn-w) + 3 * var(--app-gap));
+  }
 }
 
 .app-btn {

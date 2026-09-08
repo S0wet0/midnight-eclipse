@@ -346,6 +346,22 @@
       const [layoutMemory, setLayoutMemory] = useState(loadLayoutMemory);
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
       const taskbar = useTaskbar();
+      const windowsRef = useRef(null);
+      const activeAppId = taskbar.find(b => b.active)?.appId;
+
+      // Keep the active app's icon visible when the list is scrolled
+      // (capped at 4 while the layout drawer is open, or overflowing).
+      useEffect(() => {
+        windowsRef.current?.querySelector('.app-btn.is-front')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      }, [activeAppId, layoutsOpen, taskbar.length]);
+
+      // Mice have no horizontal wheel: map vertical wheel movement to
+      // sideways scrolling when a list (windows, tray icons) overflows.
+      function scrollSideways(e) {
+        const el = e.currentTarget;
+        if (el.scrollWidth > el.clientWidth && e.deltaY !== 0) el.scrollLeft += e.deltaY;
+      }
+
       function toggleLayouts() {
         setLayoutsOpen(prev => {
           const next = !prev;
@@ -487,7 +503,7 @@
             )}
 
             {taskbar.length > 0 && (
-              <div className="app-list divider-before">
+              <div className={layoutsOpen ? 'app-list divider-before is-capped' : 'app-list divider-before'} ref={windowsRef} onWheel={scrollSideways}>
                 {taskbar.map((app, i) => {
                   // Win+1..9, then Win+0 for the 10th; beyond that there's
                   // no shortcut, so the icon is display-only.
