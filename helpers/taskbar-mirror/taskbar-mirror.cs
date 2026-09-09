@@ -80,8 +80,12 @@ static class TaskbarMirror
         {
             try
             {
+                // Not Console.In: it decodes with the ANSI codepage, which
+                // turns a writer's UTF-8 BOM into junk characters that break
+                // the first line. StreamReader detects and drops the BOM.
+                var stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false), true);
                 string line;
-                while ((line = Console.In.ReadLine()) != null)
+                while ((line = stdin.ReadLine()) != null)
                 {
                     line = line.Trim();
                     if (line != "hide" && !line.StartsWith("hide ")) continue;
