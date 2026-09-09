@@ -449,8 +449,14 @@
         };
       }, []);
 
+      // A provider that fails (komorebi stopping, say) gets its output set to
+      // null, but Zebar signals that only to error listeners; without the
+      // second listener the bar would keep showing the last good state, and
+      // keep hiding the last hidden workspace's windows from the taskbar.
       useEffect(() => {
-        providers.onOutput(() => setOutput(providers.outputMap));
+        const sync = () => setOutput(providers.outputMap);
+        providers.onOutput(sync);
+        providers.onError(sync);
       }, []);
 
       const komorebi = output.komorebi;
