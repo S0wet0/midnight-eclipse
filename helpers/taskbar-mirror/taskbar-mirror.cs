@@ -101,7 +101,14 @@ static class TaskbarMirror
         var iconCache = new Dictionary<string, string>();
         string last = null;
         string lastActiveAppId = null;
-        DateTime lastReassert = DateTime.UtcNow;
+        // What the bar last asked for. Honoured only while komorebi runs:
+        // komorebi uncloaks every window when it stops, so they must all be
+        // back on the taskbar then, even if the bar is still showing (and
+        // sending) its last known state.
+        var want = new HashSet<long>();
+        bool komorebiUp = KomorebiRunning();
+        DateTime lastCheck = DateTime.UtcNow;
+        bool firstPass = true; // apply once at start: settles windows a killed predecessor left hidden
         try
         {
             while (!stdinClosed.WaitOne(0))
@@ -110,14 +117,23 @@ static class TaskbarMirror
                 {
                     string hide;
                     lock (pendingLock) { hide = pendingHide; pendingHide = null; }
-                    if (hide != null)
+                    bool dirty = firstPass;
+                    firstPass = false;
+                    if (hide != null) { want = ParseHwnds(hide); dirty = true; }
+                    if ((DateTime.UtcNow - lastCheck).TotalSeconds >= 2)
                     {
-                        tabs.Apply(ParseHwnds(hide));
+                        lastCheck = DateTime.UtcNow;
+                        bool up = KomorebiRunning();
+                        if (up != komorebiUp) { komorebiUp = up; want = new HashSet<long>(); dirty = true; }
+                        // The taskbar re-adds a deleted window's button on its
+                        // own at times (e.g. Explorer restarting): re-delete.
+                        else tabs.Reassert();
+                    }
+                    if (dirty)
+                    {
+                        tabs.Apply(komorebiUp ? want : new HashSet<long>());
                         Thread.Sleep(150); // the taskbar updates its buttons asynchronously
                     }
-                    // The taskbar re-adds a deleted window's button on its own
-                    // at times (e.g. Explorer restarting), so re-delete regularly.
-                    if ((DateTime.UtcNow - lastReassert).TotalSeconds >= 2) { tabs.Reassert(); lastReassert = DateTime.UtcNow; }
 
                     var buttons = ReadTaskbarButtons();
                     string active = ForegroundAppId(buttons);
@@ -130,6 +146,13 @@ static class TaskbarMirror
             }
         }
         finally { tabs.RestoreAll(); }
+    }
+
+    static bool KomorebiRunning()
+    {
+        var found = System.Diagnostics.Process.GetProcessesByName("komorebi");
+        foreach (var p in found) p.Dispose();
+        return found.Length > 0;
     }
 
     static HashSet<long> ParseHwnds(string list)
