@@ -44,6 +44,36 @@
       weather: { type: 'weather' },
     });
 
+    // Battery recovery. Zebar's battery library (starship-battery 0.8.3)
+    // looks up the battery's Windows "tag" once, at startup, and reuses it
+    // on every refresh. Windows can issue a new tag when the battery's
+    // state changes, after which every refresh fails and the provider never
+    // recovers on its own. Seen here: started while charging, then
+    // unplugged -> the stat vanished; restarting the provider (which fetches
+    // a fresh tag) brought it back while still on battery. Meanwhile the last
+    // good reading stays on screen (up to 30s) so the stat doesn't flicker away.
+    let lastBattery = null;
+    let batteryHoldUntil = 0;
+    let batteryRestartPending = false;
+    let lastBatteryRestart = 0;
+    providers.raw.battery.onOutput(output => {
+      lastBattery = output;
+      batteryHoldUntil = 0;
+    });
+    providers.raw.battery.onError(() => {
+      if (!batteryHoldUntil) batteryHoldUntil = Date.now() + 30000;
+      if (batteryRestartPending) return;
+      batteryRestartPending = true;
+      // At most one restart per 10s, so a battery that's really gone
+      // (errors on every start) is retried gently rather than in a loop.
+      setTimeout(() => {
+        batteryRestartPending = false;
+        lastBatteryRestart = Date.now();
+        providers.raw.battery.restart().catch(err => console.error('battery restart failed', err));
+      }, Math.max(2000, lastBatteryRestart + 10000 - Date.now()));
+    });
+    const currentBattery = output => output ?? (Date.now() < batteryHoldUntil ? lastBattery : null);
+
     createRoot(document.getElementById('root')).render(<App />);
 
     // komorebi's provider is a passive state listener with no command API,
@@ -488,7 +518,7 @@
 
       const mem = output.memory;
       const cpu = output.cpu;
-      const battery = output.battery;
+      const battery = currentBattery(output.battery);
       const weather = output.weather;
       const trayIcons = (output.systray?.icons ?? []).filter(icon => !isHiddenTrayIcon(icon));
 
