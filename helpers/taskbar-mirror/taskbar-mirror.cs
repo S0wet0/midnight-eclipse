@@ -136,10 +136,13 @@ static class TaskbarMirror
                     }
 
                     var buttons = ReadTaskbarButtons();
-                    string active = ForegroundAppId(buttons);
-                    if (active != null) lastActiveAppId = active; // keep last real app while the bar itself has focus
-                    string json = ToJson(buttons, lastActiveAppId, iconCache);
-                    if (json != last) { Console.Out.WriteLine(json); Console.Out.Flush(); last = json; }
+                    if (buttons != null) // null = unreadable (flyout open): keep the bar's last list
+                    {
+                        string active = ForegroundAppId(buttons);
+                        if (active != null) lastActiveAppId = active; // keep last real app while the bar itself has focus
+                        string json = ToJson(buttons, lastActiveAppId, iconCache);
+                        if (json != last) { Console.Out.WriteLine(json); Console.Out.Flush(); last = json; }
+                    }
                 }
                 catch (Exception e) { Console.Error.WriteLine("watch error: " + e.Message); }
                 WaitHandle.WaitAny(new WaitHandle[] { stdinClosed, hideArrived }, 600);
@@ -278,7 +281,8 @@ static class TaskbarMirror
         Console.Out.WriteLine("descendants=" + all.Count);
         foreach (AutomationElement e in all) Console.Out.WriteLine("  " + e.Current.ClassName + " | " + e.Current.AutomationId);
         var buttons = ReadTaskbarButtons();
-        Console.Out.WriteLine("buttons=" + buttons.Count);
+        Console.Out.WriteLine(buttons == null ? "buttons=<unreadable>" : "buttons=" + buttons.Count);
+        if (buttons == null) return;
         IntPtr fg = GetForegroundWindow();
         uint pid;
         GetWindowThreadProcessId(fg, out pid);
@@ -292,13 +296,23 @@ static class TaskbarMirror
 
     static readonly Regex RunningSuffix = new Regex(@"^(.*) - (\d+) running windows?$", RegexOptions.Singleline);
 
+    // Returns null when the taskbar can't be read right now, as opposed to an
+    // empty list for a taskbar that really has no buttons (an empty workspace
+    // with nothing pinned). While a Quick Settings / notification flyout is
+    // open, the taskbar's whole UIA tree comes back empty, not even its
+    // TaskbarFrame element (verified: 16 descendants -> 0 -> 16), and
+    // Shell_TrayWnd drops out of EnumWindows/FindWindowEx. Reporting that as
+    // "no buttons" made the bar's icons vanish whenever a flyout was open.
     static List<Button> ReadTaskbarButtons()
     {
         var result = new List<Button>();
         IntPtr bridge = FindTaskbarXamlHost();
-        if (bridge == IntPtr.Zero) return result;
+        if (bridge == IntPtr.Zero) return null;
 
         var host = AutomationElement.FromHandle(bridge);
+        var frame = new PropertyCondition(AutomationElement.ClassNameProperty, "Taskbar.TaskbarFrameAutomationPeer");
+        if (host.FindFirst(TreeScope.Descendants, frame) == null) return null;
+
         var condition = new PropertyCondition(AutomationElement.ClassNameProperty, "Taskbar.TaskListButtonAutomationPeer");
         foreach (AutomationElement element in host.FindAll(TreeScope.Descendants, condition))
         {
@@ -521,33 +535,68 @@ static class TaskbarMirror
     // (so apps send it their tray-icon messages), and FindWindow can return
     // that decoy. Pick the Shell_TrayWnd that actually hosts the taskbar's
     // XAML island.
+    //
+    // The result is cached and reused while that window exists: while a
+    // Quick Settings / notification flyout is open, EnumWindows doesn't list
+    // the real Shell_TrayWnd at all (verified: only Zebar's decoy comes
+    // back), which made the bar's icons vanish whenever a flyout was open.
+    static IntPtr cachedXamlHost = IntPtr.Zero;
+    const string XamlHostClass = "Windows.UI.Composition.DesktopWindowContentBridge";
+
     static IntPtr FindTaskbarXamlHost()
     {
+        // Still the same window? (Explorer restarting destroys it; checking
+        // the class and that it still sits under a Shell_TrayWnd guards
+        // against its handle being reused by another window.)
+        if (cachedXamlHost != IntPtr.Zero && IsWindow(cachedXamlHost)
+            && ClassOf(cachedXamlHost) == XamlHostClass
+            && ClassOf(GetAncestor(cachedXamlHost, 2 /* GA_ROOT */)) == "Shell_TrayWnd")
+            return cachedXamlHost;
+
         IntPtr host = IntPtr.Zero;
-        var name = new StringBuilder(256);
         EnumWindows((h, l) =>
         {
-            name.Clear();
-            GetClassName(h, name, name.Capacity);
-            if (name.ToString() != "Shell_TrayWnd") return true;
-            host = FindDescendant(h, "Windows.UI.Composition.DesktopWindowContentBridge");
+            if (ClassOf(h) != "Shell_TrayWnd") return true;
+            host = FindDescendant(h, XamlHostClass);
             return host == IntPtr.Zero;
         }, IntPtr.Zero);
+        // Fallback for a process that starts while a flyout is open (no cache
+        // yet): FindWindowEx walks the Shell_TrayWnd windows by class.
+        for (IntPtr h = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null);
+             host == IntPtr.Zero && h != IntPtr.Zero;
+             h = FindWindowEx(IntPtr.Zero, h, "Shell_TrayWnd", null))
+            host = FindDescendant(h, XamlHostClass);
+        cachedXamlHost = host;
         return host;
     }
+
+    static string ClassOf(IntPtr hwnd)
+    {
+        var name = new StringBuilder(256);
+        GetClassName(hwnd, name, name.Capacity);
+        return name.ToString();
+    }
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
 
-    // The XAML island host isn't a direct child of Shell_TrayWnd, so search
-    // all descendants (EnumChildWindows is recursive).
+    // The XAML island host isn't always a direct child of Shell_TrayWnd, so
+    // search all descendants (EnumChildWindows is recursive).
+    //
+    // While a Quick Settings / notification flyout is open, EnumChildWindows
+    // on the real Shell_TrayWnd skips the XAML host window itself but still
+    // returns its child (Windows.UI.Input.InputSite.WindowClass), and
+    // GetWindow/FindWindowEx see no children at all (verified on this
+    // machine with the Wi-Fi flyout open). So also accept a descendant whose
+    // parent has the class, and return that parent.
     static IntPtr FindDescendant(IntPtr parent, string className)
     {
         IntPtr found = IntPtr.Zero;
-        var name = new StringBuilder(256);
         EnumChildWindows(parent, (h, l) =>
         {
-            name.Clear();
-            GetClassName(h, name, name.Capacity);
-            if (name.ToString() == className) { found = h; return false; }
+            if (ClassOf(h) == className) { found = h; return false; }
+            IntPtr up = GetAncestor(h, 1 /* GA_PARENT */);
+            if (up != IntPtr.Zero && up != parent && ClassOf(up) == className) { found = up; return false; }
             return true;
         }, IntPtr.Zero);
         return found;
