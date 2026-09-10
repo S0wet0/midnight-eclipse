@@ -371,9 +371,17 @@ body {
 
 /* -------------------------------------------------------- 6. status panel */
 
+/* Allowed to shrink below its content so that, when the tray drawer opens
+   and the end zone runs out of room, the music title gives way first. Every
+   other item keeps its natural width (flex-shrink 0 below). */
 .status {
   display: flex;
   align-items: center;
+  min-width: 0;
+
+  & > * {
+    flex-shrink: 0;
+  }
 }
 
 /* A status reading: glyph + value, as a button when it has a click action. */
@@ -435,29 +443,63 @@ body {
   text-shadow: var(--text-halo);
 }
 
-/* Player: prev/play/next and the track title. */
+/* Player: its buttons and title take part directly in the status row, so
+   the title alone can shrink (a wrapper can't shrink below its content's
+   minimum, which counts the full title). */
 .player {
-  display: flex;
-  align-items: center;
-  margin-right: 8px;
-  padding-right: 8px;
-  border-right: 1px solid var(--accent-border);
+  display: contents;
+
+  & > .icon-btn {
+    flex-shrink: 0;
+  }
 }
 
+/* Up to 180px, and the first thing in the status panel to give way: when
+   the open tray drawer needs the room it truncates, down to nothing, before
+   the tray icons start scrolling (flex shrinks in proportion to
+   flex-shrink x size, so 1000 here vs 1 on the tray makes it go first).
+   It also draws the rule separating the player from what follows. */
 .player-title {
+  flex: 0 1000 auto;
+  min-width: 0;
   max-width: 180px;
-  margin-left: 4px;
+  margin: 0 8px 0 4px;
+  padding-right: 8px;
+  border-right: 1px solid var(--accent-border);
   font-size: 11px;
   white-space: nowrap;
   text-overflow: ellipsis;
-  overflow: hidden;
+  /* clip at the text's own edge, not the padding edge: with `hidden`, a
+     title squeezed to zero width still showed through the padding */
+  overflow: clip;
+  overflow-clip-margin: content-box;
 }
 
-/* Tray drawer: tray icons behind a chevron. */
+/* Tray drawer: second to give way (after the music title); the open
+   drawer's icons scroll sideways (wheel mapped in JS), never its chevron. */
 .tray {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.tray-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: auto hidden;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.tray-toggle {
+  flex-shrink: 0;
 }
 
 .tray-icon {

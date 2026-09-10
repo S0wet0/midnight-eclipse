@@ -621,23 +621,30 @@
 
               {trayIcons.length > 0 && (
                 <div className="tray divider-after">
-                  {trayOpen && trayIcons.map(icon => {
-                    // Styled tooltip plus the hover forwarding tray apps rely on.
-                    const t = tip({ title: icon.tooltip || 'Tray icon', rows: [['id', String(icon.id)]], hint: 'Click: app action · Right-click: menu' });
-                    return (
-                      <img
-                        key={icon.id}
-                        className="tray-icon"
-                        src={icon.iconUrl}
-                        aria-label={t['aria-label']}
-                        onClick={() => call('tray click', () => output.systray.onLeftClick(icon.id))}
-                        onContextMenu={e => { e.preventDefault(); hideTip(); call('tray right-click', () => output.systray.onRightClick(icon.id)); }}
-                        onMouseDown={t.onMouseDown}
-                        onMouseEnter={e => { t.onMouseEnter(e); quiet(() => output.systray.onHoverEnter(icon.id)); }}
-                        onMouseLeave={e => { t.onMouseLeave(e); quiet(() => output.systray.onHoverLeave(icon.id)); }}
-                      />
-                    );
-                  })}
+                  {/* Own scroller, so that when even a fully truncated music
+                      title leaves too little room, the icons scroll sideways
+                      while the collapse chevron stays put. */}
+                  {trayOpen && (
+                    <div className="tray-icons" onWheel={scrollSideways}>
+                      {trayIcons.map(icon => {
+                        // Styled tooltip plus the hover forwarding tray apps rely on.
+                        const t = tip({ title: icon.tooltip || 'Tray icon', rows: [['id', String(icon.id)]], hint: 'Click: app action · Right-click: menu' });
+                        return (
+                          <img
+                            key={icon.id}
+                            className="tray-icon"
+                            src={icon.iconUrl}
+                            aria-label={t['aria-label']}
+                            onClick={() => call('tray click', () => output.systray.onLeftClick(icon.id))}
+                            onContextMenu={e => { e.preventDefault(); hideTip(); call('tray right-click', () => output.systray.onRightClick(icon.id)); }}
+                            onMouseDown={t.onMouseDown}
+                            onMouseEnter={e => { t.onMouseEnter(e); quiet(() => output.systray.onHoverEnter(icon.id)); }}
+                            onMouseLeave={e => { t.onMouseLeave(e); quiet(() => output.systray.onHoverLeave(icon.id)); }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                   <button className="icon-btn tray-toggle" {...tip(trayOpen ? 'Hide tray icons' : `Show tray icons (${trayIcons.length})`)} onClick={toggleTray}>
                     <Glyph name={trayOpen ? 'nf-md-chevron_right' : 'nf-md-chevron_left'} />
                   </button>
