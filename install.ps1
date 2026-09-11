@@ -11,9 +11,9 @@
 #                       C:\Program Files\komorebi\bin
 #
 # What it does:
-#  1. Builds the taskbar-mirror helper from source with the C# compiler
-#     built into Windows, into %LOCALAPPDATA%\midnight-eclipse\bin. No
-#     prebuilt .exe is shipped.
+#  1. Builds the two helper programs (taskbar-mirror, power-status) from
+#     source with the C# compiler built into Windows, into
+#     %LOCALAPPDATA%\midnight-eclipse\bin. No prebuilt .exe is shipped.
 #  2. Copies the Zebar pack to %USERPROFILE%\.glzr\zebar\midnight-eclipse,
 #     filling in this machine's helper and komorebic paths. Zebar only lets
 #     a widget run a program whose path matches its zpack.json entry
@@ -63,12 +63,13 @@ if ($zebarWasRunning) {
     Get-Process zebar -ErrorAction SilentlyContinue | Stop-Process -Force
     # The helpers exit when Zebar closes their input; give them a moment.
     $deadline = (Get-Date).AddSeconds(5)
-    while ((Get-Process taskbar-mirror -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+    while ((Get-Process taskbar-mirror, power-status -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
 }
 
 # --- 1. helpers ----------------------------------------------------------------
 Write-Host "building helpers into $HelperDir"
 & (Join-Path $Here 'helpers\taskbar-mirror\build.ps1') -OutDir $HelperDir
+& (Join-Path $Here 'helpers\power-status\build.ps1') -OutDir $HelperDir
 
 # --- 2. pack -------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $PackDir | Out-Null

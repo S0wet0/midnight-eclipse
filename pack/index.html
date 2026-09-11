@@ -30,7 +30,8 @@
     const shellWrite = (proc, data) => invoke('shell_write', { pid: proc.processId, buffer: data });
     const shellKill = proc => invoke('shell_kill', { pid: proc.processId });
 
-    // Zebar data sources, alphabetical.
+    // Zebar data sources, alphabetical. Battery is only a fallback and
+    // tooltip detail source (see below); live power comes from power-status.
     const providers = zebar.createProviderGroup({
       audio: { type: 'audio' },
       battery: { type: 'battery' },
@@ -44,18 +45,30 @@
       weather: { type: 'weather' },
     });
 
-    // Battery recovery. Zebar's battery library (starship-battery 0.8.3)
-    // looks up the battery's Windows "tag" once, at startup, and reuses it
-    // on every refresh. Windows can issue a new tag when the battery's
-    // state changes, after which every refresh fails and the provider never
-    // recovers on its own. Seen here: started while charging, then
-    // unplugged -> the stat vanished; restarting the provider (which fetches
-    // a fresh tag) brought it back while still on battery. Meanwhile the last
-    // good reading stays on screen (up to 30s) so the stat doesn't flicker away.
+    // Battery. The icon, charge % and plugged-in state come from the
+    // power-status helper (usePowerStatus), which sees the charger change
+    // within 500ms. Zebar's battery provider only refreshes every 60s by
+    // default, so plug/unplug used to take a minute or more to show; it's
+    // kept only for the tooltip's details (health), and as a fallback if the
+    // helper isn't running.
+    //
+    // It also needs recovering. Its library (starship-battery 0.8.3) looks up
+    // the battery's Windows "tag" once, at startup, and reuses it on every
+    // refresh. Windows can issue a new tag when the battery's state changes,
+    // after which every refresh fails and the provider never recovers on its
+    // own. Seen here: started while charging, then unplugged -> the stat
+    // vanished; restarting the provider (which fetches a fresh tag) brought
+    // it back while still on battery. So it's restarted on error, and right
+    // away whenever the charger is plugged or unplugged. Meanwhile its last
+    // good reading is kept (up to 30s).
     let lastBattery = null;
     let batteryHoldUntil = 0;
     let batteryRestartPending = false;
     let lastBatteryRestart = 0;
+    function restartBattery() {
+      lastBatteryRestart = Date.now();
+      providers.raw.battery.restart().catch(err => console.error('battery restart failed', err));
+    }
     providers.raw.battery.onOutput(output => {
       lastBattery = output;
       batteryHoldUntil = 0;
@@ -64,12 +77,11 @@
       if (!batteryHoldUntil) batteryHoldUntil = Date.now() + 30000;
       if (batteryRestartPending) return;
       batteryRestartPending = true;
-      // At most one restart per 10s, so a battery that's really gone
-      // (errors on every start) is retried gently rather than in a loop.
+      // At most one error-driven restart per 10s, so a battery that's really
+      // gone (errors on every start) is retried gently rather than in a loop.
       setTimeout(() => {
         batteryRestartPending = false;
-        lastBatteryRestart = Date.now();
-        providers.raw.battery.restart().catch(err => console.error('battery restart failed', err));
+        restartBattery();
       }, Math.max(2000, lastBatteryRestart + 10000 - Date.now()));
     });
     const currentBattery = output => output ?? (Date.now() < batteryHoldUntil ? lastBattery : null);
@@ -275,15 +287,35 @@
     // changes, and again to each new instance.
     function useTaskbar(hideLine) {
       const [buttons, setButtons] = useState([]);
-      const procRef = useRef(null);
       const hideRef = useRef(hideLine);
       hideRef.current = hideLine;
-      const send = line => {
-        const proc = procRef.current;
-        if (!proc) return;
+      const send = (proc, line) =>
         shellWrite(proc, line + '\n').catch(err => reportError(`taskbar mirror: couldn't send window list: ${err}`));
-      };
-      useEffect(() => send(hideLine), [hideLine]);
+      // A killed helper can't put hidden windows back itself; the next
+      // instance does, from the state file it keeps.
+      const procRef = useWatcher(TASKBAR_MIRROR, 'taskbar mirror', data => setButtons(data), proc => send(proc, hideRef.current));
+      useEffect(() => { if (procRef.current) send(procRef.current, hideLine); }, [hideLine]);
+      return buttons;
+    }
+
+    // Live power state from Windows (helpers/power-status):
+    // { hasBattery, acOnline, charging, percent, energySaver }, or null until
+    // the helper's first report. Zebar's battery provider is too slow for
+    // plug/unplug and doesn't report energy saver at all.
+    const POWER_STATUS = '__HELPERS__\\power-status.exe';
+    function usePowerStatus() {
+      const [power, setPower] = useState(null);
+      useWatcher(POWER_STATUS, 'power status', data => setPower(data));
+      return power;
+    }
+
+    // Keeps a helper's `watch` mode running for the bar's lifetime, parsing
+    // each stdout line as JSON and passing the latest to onData. Restarts the
+    // helper if it exits. Returns a ref to the live process, for writing to
+    // its stdin. onData/onStart are captured once, so they must only use
+    // state setters and refs.
+    function useWatcher(program, label, onData, onStart) {
+      const procRef = useRef(null);
       useEffect(() => {
         let proc = null;
         let stopped = false;
@@ -291,35 +323,33 @@
         let retry;
         async function start() {
           try {
-            proc = await zebar.shellSpawn(TASKBAR_MIRROR, ['watch']);
+            proc = await zebar.shellSpawn(program, ['watch']);
             procRef.current = proc;
-            send(hideRef.current);
+            onStart?.(proc);
             proc.onStdout(chunk => {
               buffer += chunk;
               const lines = buffer.split(/\r?\n/);
               buffer = lines.pop();
               const latest = lines.filter(Boolean).pop();
               if (latest) {
-                try { setButtons(JSON.parse(latest)); } catch (err) { reportError(`taskbar mirror sent bad data: ${err}`); }
+                try { onData(JSON.parse(latest)); } catch (err) { reportError(`${label} sent bad data: ${err}`); }
               }
             });
             proc.onExit(status => {
               if (procRef.current === proc) procRef.current = null;
               if (stopped) return;
-              reportError(`taskbar mirror exited (code ${status.exitCode}); restarting`);
+              reportError(`${label} exited (code ${status.exitCode}); restarting`);
               retry = setTimeout(start, 3000);
             });
           } catch (err) {
-            reportError(`taskbar mirror failed to start: ${err}`);
+            reportError(`${label} failed to start: ${err}`);
             retry = setTimeout(start, 5000);
           }
         }
         start();
-        // A killed helper can't put hidden windows back itself; the next
-        // instance does, from the state file it keeps.
         return () => { stopped = true; clearTimeout(retry); procRef.current = null; if (proc) shellKill(proc).catch(() => {}); };
       }, []);
-      return buttons;
+      return procRef;
     }
 
     const LAYOUTS_OPEN_KEY = 'midnight-eclipse-layouts-open';
@@ -424,6 +454,19 @@
       const [layoutsOpen, setLayoutsOpen] = useState(loadLayoutsOpen);
       const hideLine = 'hide ' + hiddenWorkspaceHwnds(output.komorebi).join(',');
       const taskbar = useTaskbar(hideLine);
+      const power = usePowerStatus();
+      const energySaver = power?.energySaver === true;
+
+      // Charger plugged or unplugged: the battery provider's tag is likely
+      // stale now, so restart it at once rather than waiting for its next
+      // (60s) refresh to fail.
+      const acOnline = power?.acOnline;
+      const seenAc = useRef(undefined);
+      useEffect(() => {
+        if (acOnline === undefined) return;
+        if (seenAc.current !== undefined && seenAc.current !== acOnline) restartBattery();
+        seenAc.current = acOnline;
+      }, [acOnline]);
       const windowsRef = useRef(null);
       const activeAppId = taskbar.find(b => b.active)?.appId;
 
@@ -518,7 +561,22 @@
 
       const mem = output.memory;
       const cpu = output.cpu;
-      const battery = currentBattery(output.battery);
+      // What the battery stat shows. From the power-status helper when it's
+      // reporting (instant plug/unplug), with health from Zebar's provider;
+      // otherwise Zebar's provider alone. isCharging = plugged in, so the bolt
+      // appears the moment the charger connects, as on Windows' own taskbar
+      // icon (which also shows it when plugged in at 100%, not charging).
+      const batteryDetails = currentBattery(output.battery);
+      const battery = power
+        ? (power.hasBattery && power.percent != null
+            ? {
+                chargePercent: power.percent,
+                isCharging: power.acOnline,
+                state: power.charging ? 'charging' : power.acOnline ? 'plugged in, not charging' : 'on battery',
+                healthPercent: batteryDetails?.healthPercent,
+              }
+            : null)
+        : batteryDetails && { ...batteryDetails, state: batteryDetails.isCharging ? 'charging' : batteryDetails.state };
       const weather = output.weather;
       const trayIcons = (output.systray?.icons ?? []).filter(icon => !isHiddenTrayIcon(icon));
 
@@ -719,7 +777,8 @@
                     title: 'Battery',
                     rows: [
                       ['Charge', `${Math.round(battery.chargePercent)}%`],
-                      ['State', battery.isCharging ? 'charging' : battery.state],
+                      ['State', battery.state],
+                      ['Energy saver', energySaver ? 'on' : 'off'],
                       battery.healthPercent != null && ['Health', `${Math.round(battery.healthPercent)}%`],
                     ].filter(Boolean),
                     hint: 'Click: Quick Settings (energy saver, brightness)',

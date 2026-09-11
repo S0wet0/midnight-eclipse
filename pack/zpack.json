@@ -30,6 +30,7 @@
       "privileges": {
         "shellCommands": [
           { "program": "__HELPERS__\\taskbar-mirror.exe", "argsRegex": "^(watch|press [0-9])$" },
+          { "program": "__HELPERS__\\power-status.exe", "argsRegex": "^watch$" },
           { "program": "explorer.exe", "argsRegex": "^(ms-actioncenter:|ms-actioncenter:controlcenter/(wifi|bluetooth|cast|project|volume)?)$" },
           { "program": "__KOMOREBIC__", "argsRegex": "^(focus-workspace [0-8]|change-layout (bsp|columns|rows|vertical-stack|horizontal-stack|ultrawide-vertical-stack|grid|right-main-vertical-stack|scrolling))$" }
         ]

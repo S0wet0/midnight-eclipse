@@ -16,7 +16,7 @@ $Utf8      = New-Object System.Text.UTF8Encoding $false
 $zebarExe = (Get-Process zebar -ErrorAction SilentlyContinue | Select-Object -First 1).Path
 Get-Process zebar -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 1
-Get-Process taskbar-mirror -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process taskbar-mirror, power-status -ErrorAction SilentlyContinue | Stop-Process -Force
 
 # Windows on hidden workspaces may still be off the taskbar if a helper was
 # killed; its state file says which. Put them back before deleting it.
