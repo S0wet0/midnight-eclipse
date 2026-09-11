@@ -16,17 +16,20 @@
 
 /* ---------------------------------------------------------------- 1. tokens */
 
+/* The accent is komorebi's focused-window border colour (#8DBCFF in
+   komorebi.json's border_colours), so the bar and the window borders read
+   as one system. Change both together. */
 :root {
-  --accent: rgb(0 255 255 / 100%);
-  --accent-glow: rgb(0 255 255 / 80%);
-  --accent-border: rgb(0 255 255 / 30%);
-  --accent-border-strong: rgb(0 255 255 / 60%);
-  --accent-hover-bg: rgb(0 255 255 / 40%);
+  --accent: rgb(141 188 255 / 100%);
+  --accent-glow: rgb(141 188 255 / 80%);
+  --accent-border: rgb(141 188 255 / 30%);
+  --accent-border-strong: rgb(141 188 255 / 60%);
+  --accent-hover-bg: rgb(141 188 255 / 40%);
   --text: rgb(255 255 255 / 100%);
   --panel-bg: rgb(20 20 30 / 80%);
   --panel-bg-soft: rgb(20 20 30 / 50%);
   --root-bg: rgb(0 0 0 / 30%);
-  --root-border: rgb(0 255 255 / 40%);
+  --root-border: rgb(141 188 255 / 40%);
   --danger: rgb(255 0 0 / 100%);
   --warning: rgb(255 220 0 / 100%);
   --success: rgb(0 255 0 / 100%);
@@ -38,19 +41,20 @@
   --text-halo: 0 0 10px var(--accent-glow);
 }
 
-/* Light variant: a deeper accent that stays legible on light glass. */
+/* Light variant: the pale border blue washes out on light glass, so the
+   accent deepens to the same hue (about 215 degrees) for legibility. */
 @media (prefers-color-scheme: light) {
   :root {
-    --accent: rgb(0 140 150 / 100%);
-    --accent-glow: rgb(0 140 150 / 60%);
-    --accent-border: rgb(0 140 150 / 35%);
-    --accent-border-strong: rgb(0 140 150 / 65%);
-    --accent-hover-bg: rgb(0 140 150 / 25%);
+    --accent: rgb(30 100 200 / 100%);
+    --accent-glow: rgb(30 100 200 / 60%);
+    --accent-border: rgb(30 100 200 / 35%);
+    --accent-border-strong: rgb(30 100 200 / 65%);
+    --accent-hover-bg: rgb(30 100 200 / 25%);
     --text: rgb(20 20 30 / 100%);
     --panel-bg: rgb(255 255 255 / 75%);
     --panel-bg-soft: rgb(255 255 255 / 50%);
     --root-bg: rgb(255 255 255 / 45%);
-    --root-border: rgb(0 140 150 / 35%);
+    --root-border: rgb(30 100 200 / 35%);
     --danger: rgb(200 0 0 / 100%);
     --warning: rgb(170 120 0 / 100%);
     --success: rgb(0 130 0 / 100%);
