@@ -443,6 +443,45 @@ body {
   text-shadow: var(--text-halo);
 }
 
+/* Battery glyph, tinted by data-tone, plus a bolt overlaid through its
+   middle while plugged in. */
+.battery-glyph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+
+  &[data-tone] > .nf:first-child {
+    color: var(--tone);
+    text-shadow: 0 0 10px var(--tone);
+  }
+
+  &[data-tone='danger'] { --tone: var(--danger); }
+  &[data-tone='warning'] { --tone: var(--warning); }
+  &[data-tone='success'] { --tone: var(--success); }
+}
+
+.battery-bolt {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  /* nf-md-lightning_bolt: narrow enough that the battery's outline and
+     colour stay visible around it */
+  font-size: 0.95em;
+  /* text colour with a dark outline, so it reads over any battery tone; no
+     glow, which would tint the battery's own colour */
+  color: var(--text);
+  text-shadow:
+    -1px 0 var(--panel-bg), 1px 0 var(--panel-bg),
+    0 -1px var(--panel-bg), 0 1px var(--panel-bg);
+  animation: bolt-pulse 2s ease-in-out infinite;
+}
+
+@keyframes bolt-pulse {
+  50% { opacity: 0.6; }
+}
+
 /* Player: its buttons and title take part directly in the status row, so
    the title alone can shrink (a wrapper can't shrink below its content's
    minimum, which counts the full title). */

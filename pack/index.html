@@ -422,6 +422,16 @@
     const BATTERY_STEPS = [20, 40, 70, 90];
     const batteryGlyph = percent => `nf-fa-battery_${passed(percent, BATTERY_STEPS, true)}`;
 
+    // Battery tint, most urgent first: red at 10% or below (even while
+    // plugged in or in energy saver), yellow in energy saver, green while
+    // plugged in above 30%; otherwise none (the normal accent).
+    function batteryTone(percent, pluggedIn, energySaver) {
+      if (percent <= 10) return 'danger';
+      if (energySaver) return 'warning';
+      if (pluggedIn && percent > 30) return 'success';
+      return undefined;
+    }
+
     // Volume (%) above which the next louder speaker glyph is used.
     const VOLUME_GLYPHS = ['nf-fa-volume_down', 'nf-md-volume_medium', 'nf-fa-volume_up'];
     const VOLUME_STEPS = [33, 66];
@@ -785,7 +795,12 @@
                   })}
                   onClick={() => openShell(QS.main)}
                 >
-                  <Glyph name={batteryGlyph(battery.chargePercent)} />
+                  {/* While plugged in, a lightning bolt strikes vertically
+                      through the battery glyph. */}
+                  <span className="battery-glyph" data-tone={batteryTone(battery.chargePercent, battery.isCharging, energySaver)}>
+                    <Glyph name={batteryGlyph(battery.chargePercent)} />
+                    {battery.isCharging && <Glyph name="nf-md-lightning_bolt" className="battery-bolt" />}
+                  </span>
                   {Math.round(battery.chargePercent)}%
                 </button>
               )}
