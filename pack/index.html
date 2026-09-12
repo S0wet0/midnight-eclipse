@@ -4,6 +4,9 @@
 <head>
   <meta charset="utf-8" />
   <title>Midnight Eclipse</title>
+  <!-- Open the CDN connections while the page is still parsing. -->
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="preconnect" href="https://esm.sh" crossorigin />
   <link rel="stylesheet" type="text/css" href="./styles.css" />
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"
     integrity="sha256-aS0B0wnsaDByLfE16h4MDCP1fQFccysd1YWOcV+gbBo=" crossorigin="anonymous"></script>
@@ -14,8 +17,8 @@
 
   <script type="text/babel" data-type="module">
     // Midnight Eclipse — Zebar status bar for komorebi.
-    import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18?dev';
-    import { createRoot } from 'https://esm.sh/react-dom@18/client?dev';
+    import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.3.1';
+    import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
     // Pinned to the installed Zebar app's version. The v2 client lacked
     // audio.setMute and the systray provider entirely.
     import * as zebar from 'https://esm.sh/zebar@3.3.1';
