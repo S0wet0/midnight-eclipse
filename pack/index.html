@@ -17,6 +17,13 @@
 
   <script type="text/babel" data-type="module">
     // Midnight Eclipse — Zebar status bar for komorebi.
+    //
+    // Start: workspace buttons, a layout drawer, and an app list that
+    // mirrors the native taskbar (helpers/taskbar-mirror). Middle: date
+    // and the focused window's title. End: media player, tray drawer,
+    // network / memory / CPU / battery / volume / weather readings, and
+    // Quick Settings shortcuts. Tooltips are drawn by the separate
+    // tooltip widget (tooltip.html).
     import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.3.1';
     import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
     // Pinned to the installed Zebar app's version. The v2 client lacked

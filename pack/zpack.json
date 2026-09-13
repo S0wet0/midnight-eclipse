@@ -1,9 +1,10 @@
 {
   "$schema": "https://github.com/glzr-io/zebar/raw/v3.3.1/resources/zpack-schema.json",
   "name": "midnight-eclipse",
-  "description": "Midnight Eclipse: a glass status bar for komorebi",
-  "version": "0.1.0",
+  "description": "Midnight Eclipse: a glass status bar for komorebi with workspace and layout switching, a taskbar-mirroring app list, live power and media controls, a tray drawer and Quick Settings shortcuts",
+  "version": "1.0.0",
   "tags": ["komorebi", "glass", "taskbar"],
+  "repositoryUrl": "https://github.com/S0wet0/midnight-eclipse",
   "widgets": [
     {
       "name": "bar",
