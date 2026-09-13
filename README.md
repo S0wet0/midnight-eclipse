@@ -71,6 +71,17 @@ In `komorebi.json`:
 
 The bar's accent colour is komorebi's focused-border blue, `#8DBCFF` (`border_colours` in `komorebi.json`); change both together to keep them matching. The [komorebi Midnight Eclipse preset](https://github.com/S0wet0/komorebi-midnight-eclipse) already has all three settings.
 
+### Using it with your own komorebi setup
+
+The theme doesn't need the preset. It works with any komorebi 0.1.41+ setup:
+
+- **Your keybindings, layouts and workspaces stay yours.** The bar shows however many workspaces you have, whatever their names, and switches them with `komorebic`. It finds `komorebic.exe` on install; pass `-KomorebicPath` if it's somewhere unusual.
+- **Two settings are required** (above): reserve 44px at the top, and don't tile `zebar.exe`.
+- **Turn off komorebi's own bar** if you use it (`komorebic start` without `--bar`, or remove it from your startup), so two bars don't stack.
+- **Startup:** the installer adds a logon entry that starts Zebar, whatever starts komorebi for you. If Zebar opens first, the bar fills in once komorebi is running.
+- **Colours:** set `--accent` in `pack/styles.css` to your own `border_colours`, then re-run `install.ps1`.
+- **Several monitors:** each monitor gets a bar, but a workspace button switches the workspace on the focused monitor, since that's what `komorebic focus-workspace` does.
+
 ## Uninstall
 
 ```powershell
