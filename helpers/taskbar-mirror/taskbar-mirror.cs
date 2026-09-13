@@ -97,6 +97,9 @@ static class TaskbarMirror
             stdinClosed.Set();
         }) { IsBackground = true }.Start();
 
+        // Before reading the hidden-windows state: an older instance hands it over.
+        var quit = ClaimSingleInstance("MidnightEclipse.taskbar-mirror");
+        var widgets = new WidgetWatchdog();
         var tabs = new HiddenTabs();
         var iconCache = new Dictionary<string, string>();
         string last = null;
@@ -107,12 +110,13 @@ static class TaskbarMirror
         // back on the taskbar then, even if the bar is still showing (and
         // sending) its last known state.
         var want = new HashSet<long>();
+        var ownWidgets = new HashSet<long>(); // the bar's own windows (WidgetWatchdog)
         bool komorebiUp = KomorebiRunning();
         DateTime lastCheck = DateTime.UtcNow;
         bool firstPass = true; // apply once at start: settles windows a killed predecessor left hidden
         try
         {
-            while (!stdinClosed.WaitOne(0))
+            while (!stdinClosed.WaitOne(0) && !quit.WaitOne(0))
             {
                 try
                 {
@@ -129,10 +133,15 @@ static class TaskbarMirror
                         // The taskbar re-adds a deleted window's button on its
                         // own at times (e.g. Explorer restarting): re-delete.
                         else tabs.Flush();
+                        var own = widgets.Check();
+                        if (!own.SetEquals(ownWidgets)) { ownWidgets = own; dirty = true; }
                     }
                     if (dirty)
                     {
-                        tabs.Apply(komorebiUp ? want : new HashSet<long>(), lastButtons);
+                        // The bar's windows stay off the taskbar even when komorebi isn't running.
+                        var off = komorebiUp ? new HashSet<long>(want) : new HashSet<long>();
+                        off.UnionWith(ownWidgets);
+                        tabs.Apply(off, lastButtons);
                         Thread.Sleep(150); // the taskbar updates its buttons asynchronously
                     }
 
@@ -147,11 +156,108 @@ static class TaskbarMirror
                     }
                 }
                 catch (Exception e) { Console.Error.WriteLine("watch error: " + e.Message); }
-                WaitHandle.WaitAny(new WaitHandle[] { stdinClosed, hideArrived }, 600);
+                WaitHandle.WaitAny(new WaitHandle[] { stdinClosed, hideArrived, quit }, 600);
             }
         }
-        finally { tabs.RestoreAll(); }
+        // Handing over to a newer instance: leave hidden windows hidden (the
+        // state file says which) instead of flashing them back.
+        finally { if (!quit.WaitOne(0)) tabs.RestoreAll(); }
     }
+
+    // One watcher per session. A newer instance means the bar was reopened or
+    // reloaded without Zebar restarting: Zebar doesn't stop the processes a
+    // closed widget started, so the old bar's helper would otherwise keep
+    // running beside the new one with a stale hide list (seen: two of each
+    // helper after reopening the bar). The newer one asks the older to quit,
+    // waits for it, and then takes over.
+    static Mutex instanceMutex; // held for the process's lifetime
+    static EventWaitHandle ClaimSingleInstance(string name)
+    {
+        var quit = new EventWaitHandle(false, EventResetMode.ManualReset, @"Local\" + name + ".quit");
+        instanceMutex = new Mutex(false, @"Local\" + name + ".instance");
+        bool owned;
+        try { owned = instanceMutex.WaitOne(0); } catch (AbandonedMutexException) { owned = true; }
+        if (!owned)
+        {
+            quit.Set();
+            try { owned = instanceMutex.WaitOne(10000); } catch (AbandonedMutexException) { owned = true; }
+            if (!owned) Console.Error.WriteLine("an older instance didn't exit; continuing anyway");
+        }
+        quit.Reset();
+        return quit;
+    }
+
+    // Reopens the bar or its tooltip if the window disappears while Zebar
+    // keeps running. Zebar closes a widget like any window: Alt+F4 while the
+    // bar had keyboard focus (after a click on it) closed it for good, with
+    // Zebar still running, so no supervisor noticed. This helper outlives its
+    // widget (see ClaimSingleInstance), so it runs `zebar start-widget-preset`,
+    // and the reopened bar's new helper retires this one. A widget closed on
+    // purpose from Zebar's own menu comes back too; to remove the bar, quit
+    // Zebar or uninstall.
+    class WidgetWatchdog
+    {
+        const string Pack = "midnight-eclipse";
+        static readonly string[] Names = { "bar", "tooltip" };
+        readonly int[] misses = new int[2];
+
+        // Called every 2s. Returns the widgets' own windows, which Watch keeps
+        // off the taskbar: Zebar is meant to (shownInTaskbar: false), but a
+        // tooltip reopened with start-widget-preset came back with a taskbar
+        // button (seen), which the bar then mirrored as a Zebar icon.
+        public HashSet<long> Check()
+        {
+            var own = new HashSet<long>();
+            System.Diagnostics.Process zebar = null;
+            int session = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName("zebar"))
+                if (zebar == null && p.SessionId == session) zebar = p; else p.Dispose();
+            if (zebar == null) return own;
+            try
+            {
+                var windows = WidgetWindows((uint)zebar.Id);
+                foreach (var h in windows.Values) own.Add(h);
+                for (int i = 0; i < Names.Length; i++)
+                {
+                    if (windows.ContainsKey(Names[i])) { misses[i] = 0; continue; }
+                    // ~6s: when Zebar reloads its widgets it closes and reopens them.
+                    if (++misses[i] < 3) continue;
+                    misses[i] = -15; // then give it ~30s before trying again
+                    Console.Error.WriteLine("widget '" + Names[i] + "' is gone; reopening it");
+                    var start = new System.Diagnostics.ProcessStartInfo(zebar.MainModule.FileName,
+                        "start-widget-preset --pack " + Pack + " --widget-name " + Names[i] + " --preset default");
+                    start.UseShellExecute = false;
+                    start.CreateNoWindow = true;
+                    System.Diagnostics.Process.Start(start).Dispose();
+                }
+            }
+            catch (Exception e) { Console.Error.WriteLine("widget watchdog: " + e.Message); }
+            finally { zebar.Dispose(); }
+            return own;
+        }
+
+        // Widget name -> window, for Zebar's windows titled
+        // "Zebar - midnight-eclipse / <widget>".
+        static Dictionary<string, long> WidgetWindows(uint pid)
+        {
+            string prefix = "Zebar - " + Pack + " / ";
+            var found = new Dictionary<string, long>();
+            var text = new StringBuilder(256);
+            EnumWindows((h, l) =>
+            {
+                uint owner;
+                GetWindowThreadProcessId(h, out owner);
+                if (owner != pid) return true;
+                text.Clear();
+                GetWindowText(h, text, text.Capacity);
+                string title = text.ToString();
+                if (title.StartsWith(prefix)) found[title.Substring(prefix.Length)] = h.ToInt64();
+                return true;
+            }, IntPtr.Zero);
+            return found;
+        }
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int max);
 
     static bool KomorebiRunning()
     {
@@ -192,12 +298,13 @@ static class TaskbarMirror
     // process id too, so a window handle reused by another window after a
     // reboot or app restart is never touched.
     //
-    // Connection: ITaskbarList talks to Explorer's taskbar, and HrInit fails
-    // (E_NOTIMPL, verified) while the session is locked, and presumably while
-    // the taskbar isn't up yet at logon; DeleteTab/AddTab then return S_OK but
-    // do nothing. So HrInit's result is checked and retried, changes wait
-    // until the taskbar accepts them, and the connection is remade when the
-    // taskbar's window changes (Explorer restarted).
+    // Connection: ITaskbarList talks to Explorer's taskbar, and HrInit can fail
+    // (E_NOTIMPL), after which DeleteTab/AddTab return S_OK but do nothing. The
+    // main cause is Zebar's decoy Shell_TrayWnd sitting above the real taskbar
+    // (see LowerDecoyTrays); it has also failed while the taskbar wasn't up yet.
+    // So HrInit's result is checked and retried, changes wait until the
+    // taskbar accepts them, and the connection is remade when the taskbar's
+    // window changes (Explorer restarted).
     //
     // Order: a window taken off and put back gets a new button position, and
     // Explorer placed re-added buttons in the reverse of the order they were
@@ -247,6 +354,7 @@ static class TaskbarMirror
             if (host == IntPtr.Zero) return list != null; // unreadable (flyout open): keep what we have
             if (list != null && host == connectedHost) return true;
             if (list != null) { Marshal.ReleaseComObject(list); list = null; }
+            LowerDecoyTrays(GetAncestor(host, 2 /* GA_ROOT */));
             var candidate = (ITaskbarList)new TaskbarListClass();
             if (candidate.HrInit() != 0) { Marshal.ReleaseComObject(candidate); return false; }
             list = candidate;
@@ -254,6 +362,32 @@ static class TaskbarMirror
             // A new taskbar shows every button again: re-delete what should be hidden.
             foreach (var e in hidden.Values) e.Applied = false;
             return true;
+        }
+
+        // HrInit fails (E_NOTIMPL) while Zebar's hidden decoy Shell_TrayWnd
+        // (its tray spy, see FindTaskbarXamlHost) sits above the real taskbar in
+        // the z-order, which it usually does: Zebar re-raises it to topmost
+        // every 100ms. Verified: HrInit failed, and succeeded right after the
+        // decoy was moved to the bottom. So push every Shell_TrayWnd that isn't
+        // the real taskbar down just before HrInit. Zebar takes its place back
+        // within 100ms; the connection, once made, keeps working.
+        public static void LowerDecoyTraysForDebug(IntPtr realTaskbar) { LowerDecoyTrays(realTaskbar); }
+
+        static void LowerDecoyTrays(IntPtr realTaskbar)
+        {
+            var name = new StringBuilder(64);
+            EnumWindows((h, l) =>
+            {
+                name.Clear();
+                GetClassName(h, name, name.Capacity);
+                if (name.ToString() == "Shell_TrayWnd" && h != realTaskbar)
+                {
+                    const uint NoMoveSizeActivate = 0x0013; // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+                    SetWindowPos(h, new IntPtr(-2) /* HWND_NOTOPMOST */, 0, 0, 0, 0, NoMoveSizeActivate);
+                    SetWindowPos(h, new IntPtr(1) /* HWND_BOTTOM */, 0, 0, 0, 0, NoMoveSizeActivate);
+                }
+                return true;
+            }, IntPtr.Zero);
         }
 
         // want = the full set of windows to keep off the taskbar. buttons =
@@ -344,7 +478,15 @@ static class TaskbarMirror
         var probe = (ITaskbarList)new TaskbarListClass();
         int hr = probe.HrInit();
         Marshal.ReleaseComObject(probe);
-        Console.Out.WriteLine("taskbar accepts changes: " + (hr == 0 ? "yes" : "no (HrInit 0x" + hr.ToString("X8") + ", e.g. session locked)"));
+        Console.Out.WriteLine("taskbar accepts changes: " + (hr == 0 ? "yes" : "no (HrInit 0x" + hr.ToString("X8") + ")"));
+        if (hr != 0 && bridge != IntPtr.Zero)
+        {
+            HiddenTabs.LowerDecoyTraysForDebug(GetAncestor(bridge, 2));
+            probe = (ITaskbarList)new TaskbarListClass();
+            hr = probe.HrInit();
+            Marshal.ReleaseComObject(probe);
+            Console.Out.WriteLine("  after lowering decoy Shell_TrayWnd windows: " + (hr == 0 ? "yes" : "still no (0x" + hr.ToString("X8") + ")"));
+        }
         if (bridge == IntPtr.Zero) return;
         var all = AutomationElement.FromHandle(bridge).FindAll(TreeScope.Descendants, Condition.TrueCondition);
         Console.Out.WriteLine("descendants=" + all.Count);
@@ -651,6 +793,7 @@ static class TaskbarMirror
         return name.ToString();
     }
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
 

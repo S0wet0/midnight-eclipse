@@ -40,9 +40,10 @@ static class PowerStatus
         // Exit when the bar (our parent) goes away: it holds our stdin open.
         var stdinClosed = new ManualResetEvent(false);
         new Thread(() => { try { while (Console.In.Read() != -1) { } } catch { } stdinClosed.Set(); }) { IsBackground = true }.Start();
+        var quit = ClaimSingleInstance("MidnightEclipse.power-status");
 
         string last = null;
-        while (!stdinClosed.WaitOne(0))
+        while (!stdinClosed.WaitOne(0) && !quit.WaitOne(0))
         {
             SYSTEM_POWER_STATUS s;
             if (GetSystemPowerStatus(out s))
@@ -56,8 +57,28 @@ static class PowerStatus
                 if (json != last) { Console.Out.WriteLine(json); Console.Out.Flush(); last = json; }
             }
             else Console.Error.WriteLine("GetSystemPowerStatus failed: " + Marshal.GetLastWin32Error());
-            stdinClosed.WaitOne(500);
+            WaitHandle.WaitAny(new WaitHandle[] { stdinClosed, quit }, 500);
         }
+    }
+
+    // One watcher per session. A newer instance means the bar was reopened or
+    // reloaded without Zebar restarting, and Zebar doesn't stop the processes
+    // a closed widget started; the newer one asks the older to quit.
+    static Mutex instanceMutex; // held for the process's lifetime
+    static EventWaitHandle ClaimSingleInstance(string name)
+    {
+        var quit = new EventWaitHandle(false, EventResetMode.ManualReset, @"Local\" + name + ".quit");
+        instanceMutex = new Mutex(false, @"Local\" + name + ".instance");
+        bool owned;
+        try { owned = instanceMutex.WaitOne(0); } catch (AbandonedMutexException) { owned = true; }
+        if (!owned)
+        {
+            quit.Set();
+            try { owned = instanceMutex.WaitOne(10000); } catch (AbandonedMutexException) { owned = true; }
+            if (!owned) Console.Error.WriteLine("an older instance didn't exit; continuing anyway");
+        }
+        quit.Reset();
+        return quit;
     }
 
     static string Bool(bool b) { return b ? "true" : "false"; }

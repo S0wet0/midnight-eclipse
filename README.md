@@ -96,7 +96,7 @@ The bar is a single buildless Zebar widget (`pack/index.html`, React + JSX compi
 
 | Helper | What it does |
 |---|---|
-| `taskbar-mirror` | Reads the Windows 11 taskbar's buttons through UI Automation and reports them to the bar (names, order, window counts, icons, which app is in front). Clicking an icon sends Win+N. It also takes windows on hidden komorebi workspaces off the taskbar (`ITaskbarList::DeleteTab`) and puts them back when you switch, when Zebar closes, or when komorebi stops. |
+| `taskbar-mirror` | Reads the Windows 11 taskbar's buttons through UI Automation and reports them to the bar (names, order, window counts, icons, which app is in front). Clicking an icon sends Win+N. It also takes windows on hidden komorebi workspaces off the taskbar (`ITaskbarList::DeleteTab`) and puts them back when you switch, when Zebar closes, or when komorebi stops. And it reopens the bar or its tooltip if either is closed while Zebar keeps running (for example Alt+F4 while the bar has focus), within about 8 seconds. |
 | `power-status` | Reports charger state, charge, charging and energy saver from `GetSystemPowerStatus` twice a second. Zebar's own battery provider only refreshes every 60 seconds and doesn't report energy saver. |
 
 Both are plain C# 5, built with the compiler in Windows, and run as your normal user.
@@ -120,6 +120,7 @@ After editing files in the repo, re-run `install.ps1`.
 - The app list reads the Windows 11 taskbar through UI Automation, which a future Windows update could change.
 - Windows ignores simulated key presses from a normal program while an elevated (administrator) window is in front, so clicking an app icon may do nothing in that case.
 - Minimized windows aren't on any komorebi workspace, so they stay on the taskbar wherever they came from.
+- Because the bar reopens itself, closing it from Zebar's own menu doesn't stick either; to remove it, quit Zebar or run `uninstall.ps1`.
 - While a Quick Settings or notification flyout is open the taskbar can't be read at all; the app list keeps showing its last state until the flyout closes.
 
 ## License
