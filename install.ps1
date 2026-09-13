@@ -73,15 +73,19 @@ Write-Host "building helpers into $HelperDir"
 
 # --- 2. pack -------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $PackDir | Out-Null
-# Paths go into a JS string (index.html) and a JSON string (zpack.json):
-# both need backslashes doubled.
-$helpersEscaped   = $HelperDir.Replace('\', '\\')
-$komorebicEscaped = $KomorebicPath.Replace('\', '\\')
+# The paths go into a single-quoted JS string (index.html) and a JSON string
+# (zpack.json). Both need backslashes doubled; the JS string also needs
+# apostrophes escaped (a profile like C:\Users\O'Brien), which JSON must not
+# get. Windows paths can't contain double quotes.
+function Escape-Js($path)   { $path.Replace('\', '\\').Replace("'", "\'") }
+function Escape-Json($path) { $path.Replace('\', '\\') }
 foreach ($file in Get-ChildItem (Join-Path $Here 'pack') -File) {
     $target = Join-Path $PackDir $file.Name
     if ($file.Name -in 'index.html', 'zpack.json') {
         $text = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
-        $text = $text.Replace('__HELPERS__', $helpersEscaped).Replace('__KOMOREBIC__', $komorebicEscaped)
+        if ($file.Name -eq 'index.html') { $helpers = Escape-Js $HelperDir; $komorebic = Escape-Js $KomorebicPath }
+        else { $helpers = Escape-Json $HelperDir; $komorebic = Escape-Json $KomorebicPath }
+        $text = $text.Replace('__HELPERS__', $helpers).Replace('__KOMOREBIC__', $komorebic)
         [System.IO.File]::WriteAllText($target, $text, $Utf8)
     } else {
         Copy-Item $file.FullName $target -Force
