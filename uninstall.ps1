@@ -3,8 +3,8 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 #
 # Stops Zebar, puts back any windows the bar had taken off the taskbar,
-# removes the pack, the helpers and the startup entries, then restarts Zebar
-# if other widgets are left to run. Keep this file ASCII-only.
+# removes the pack, the helpers, the startup entries and the logon entry, then
+# restarts Zebar if other widgets are left to run. Keep this file ASCII-only.
 $ErrorActionPreference = 'Stop'
 
 $ZebarDir  = Join-Path $env:USERPROFILE '.glzr\zebar'
@@ -32,6 +32,8 @@ if (Test-Path $settingsPath) {
     [System.IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 5), $Utf8)
     Write-Host 'removed Midnight Eclipse from Zebar startup widgets (backup: settings.json.bak)'
 }
+
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Midnight Eclipse (Zebar)' -ErrorAction SilentlyContinue
 
 foreach ($dir in $PackDir, $DataDir) {
     if (Test-Path $dir) { Remove-Item $dir -Recurse -Force; Write-Host "removed $dir" }

@@ -9,6 +9,9 @@
 #                       them, so two bars don't stack on top of each other)
 #   -KomorebicPath      path to komorebic.exe, if it isn't on PATH or in
 #                       C:\Program Files\komorebi\bin
+#   -NoAutostart        don't start Zebar at logon (skipped automatically if
+#                       the komorebi Midnight Eclipse preset's autostart is
+#                       installed, since that already starts Zebar)
 #
 # What it does:
 #  1. Builds the two helper programs (taskbar-mirror, power-status) from
@@ -18,14 +21,17 @@
 #     filling in this machine's helper and komorebic paths. Zebar only lets
 #     a widget run a program whose path matches its zpack.json entry
 #     exactly, so the paths can't be generic.
-#  3. Sets Zebar to start the bar and its tooltip widget (backing up
+#  3. Sets Zebar to open the bar and its tooltip widget (backing up
 #     settings.json first), then restarts Zebar.
+#  4. Starts Zebar at logon (a per-user Run entry). Zebar has no setting of
+#     its own for this, so without it the bar would be gone after a reboot.
 # Re-running is safe and is how you update after pulling a new version.
 # Keep this file ASCII-only (Windows PowerShell 5.1 misreads non-ASCII).
 
 param(
     [switch]$KeepOtherWidgets,
-    [string]$KomorebicPath
+    [string]$KomorebicPath,
+    [switch]$NoAutostart
 )
 $ErrorActionPreference = 'Stop'
 
@@ -33,7 +39,9 @@ $Here      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ZebarDir  = Join-Path $env:USERPROFILE '.glzr\zebar'
 $PackDir   = Join-Path $ZebarDir 'midnight-eclipse'
 $HelperDir = Join-Path $env:LOCALAPPDATA 'midnight-eclipse\bin'
-$Utf8      = New-Object System.Text.UTF8Encoding $false
+$RunKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$RunName   = 'Midnight Eclipse (Zebar)'
+$Utf8     = New-Object System.Text.UTF8Encoding $false
 
 # --- prerequisites -----------------------------------------------------------
 $zebarExe = Join-Path $env:ProgramFiles 'glzr.io\Zebar\zebar.exe'
@@ -113,7 +121,24 @@ $settings = [ordered]@{
     startupConfigs = @($startup) + $ours
 }
 [System.IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 5), $Utf8)
-Write-Host 'Zebar will start the Midnight Eclipse bar and tooltip widgets'
+Write-Host 'Zebar will open the Midnight Eclipse bar and tooltip widgets'
+
+# --- 4. start Zebar at logon ---------------------------------------------------
+# The preset's autostart (a scheduled task) already starts Zebar, after
+# komorebi is ready; a second launcher would only start it twice.
+$presetAutostart = $false
+try { $presetAutostart = [bool](Get-ScheduledTask -TaskPath '\komorebi-desktop\' -TaskName 'User' -ErrorAction Stop) } catch { }
+if ($NoAutostart -or $presetAutostart -or -not $zebarExe) {
+    Remove-ItemProperty -Path $RunKey -Name $RunName -ErrorAction SilentlyContinue
+    if ($presetAutostart) { Write-Host 'Zebar is started at logon by the komorebi preset autostart; no separate entry added' }
+    elseif ($zebarExe) { Write-Host 'not starting Zebar at logon (-NoAutostart)' }
+} else {
+    # Never New-Item -Force here: on an existing registry key it recreates the
+    # key empty, deleting every other program's startup entry.
+    if (-not (Test-Path $RunKey)) { New-Item -Path $RunKey | Out-Null }
+    Set-ItemProperty -Path $RunKey -Name $RunName -Value "`"$zebarExe`""
+    Write-Host 'Zebar will start at logon'
+}
 
 # --- restart Zebar -------------------------------------------------------------
 if ($zebarExe) {

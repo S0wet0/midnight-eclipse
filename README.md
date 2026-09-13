@@ -51,7 +51,8 @@ Run it from a **normal** PowerShell (not as administrator). The installer:
 
 1. builds the two helpers from the C# source in `helpers/` into `%LOCALAPPDATA%\midnight-eclipse\bin`;
 2. copies `pack/` to `%USERPROFILE%\.glzr\zebar\midnight-eclipse`, filling in this machine's helper and `komorebic.exe` paths;
-3. sets Zebar to start the bar and tooltip widgets (your `settings.json` is backed up first; use `-KeepOtherWidgets` to keep other widgets starting too), then restarts Zebar.
+3. sets Zebar to open the bar and tooltip widgets (your `settings.json` is backed up first; use `-KeepOtherWidgets` to keep other widgets starting too), then restarts Zebar;
+4. starts Zebar at logon with a per-user startup entry, since Zebar has no setting for that. It's skipped if the [komorebi preset](https://github.com/S0wet0/komorebi-midnight-eclipse)'s autostart is installed, which already starts Zebar once komorebi is ready. Use `-NoAutostart` to skip it yourself.
 
 Re-run it to update after pulling a new version. Installing the `pack/` folder by hand, or through Zebar's marketplace, won't work: the helper paths are only filled in by the installer.
 
@@ -76,7 +77,7 @@ The bar's accent colour is komorebi's focused-border blue, `#8DBCFF` (`border_co
 powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-It puts back any windows the bar had taken off the taskbar, then removes the pack, the helpers and the startup entries.
+It puts back any windows the bar had taken off the taskbar, then removes the pack, the helpers, the startup entries and the logon entry.
 
 ## How it works
 
