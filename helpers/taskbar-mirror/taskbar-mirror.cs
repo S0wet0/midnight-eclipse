@@ -101,6 +101,7 @@ static class TaskbarMirror
         var iconCache = new Dictionary<string, string>();
         string last = null;
         string lastActiveAppId = null;
+        List<Button> lastButtons = null; // recorded button positions come from this
         // What the bar last asked for. Honoured only while komorebi runs:
         // komorebi uncloaks every window when it stops, so they must all be
         // back on the taskbar then, even if the bar is still showing (and
@@ -127,17 +128,18 @@ static class TaskbarMirror
                         if (up != komorebiUp) { komorebiUp = up; want = new HashSet<long>(); dirty = true; }
                         // The taskbar re-adds a deleted window's button on its
                         // own at times (e.g. Explorer restarting): re-delete.
-                        else tabs.Reassert();
+                        else tabs.Flush();
                     }
                     if (dirty)
                     {
-                        tabs.Apply(komorebiUp ? want : new HashSet<long>());
+                        tabs.Apply(komorebiUp ? want : new HashSet<long>(), lastButtons);
                         Thread.Sleep(150); // the taskbar updates its buttons asynchronously
                     }
 
                     var buttons = ReadTaskbarButtons();
                     if (buttons != null) // null = unreadable (flyout open): keep the bar's last list
                     {
+                        lastButtons = buttons;
                         string active = ForegroundAppId(buttons);
                         if (active != null) lastActiveAppId = active; // keep last real app while the bar itself has focus
                         string json = ToJson(buttons, lastActiveAppId, iconCache);
@@ -184,24 +186,39 @@ static class TaskbarMirror
 
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
 
-    // The windows this process has taken off the taskbar. Saved to a file so
+    // The windows this process takes off the taskbar. Saved to a file so
     // that if this process is killed (no chance to restore), the next
     // instance still knows to put them back. Each entry records the owning
     // process id too, so a window handle reused by another window after a
     // reboot or app restart is never touched.
+    //
+    // Connection: ITaskbarList talks to Explorer's taskbar, and HrInit fails
+    // (E_NOTIMPL, verified) while the session is locked, and presumably while
+    // the taskbar isn't up yet at logon; DeleteTab/AddTab then return S_OK but
+    // do nothing. So HrInit's result is checked and retried, changes wait
+    // until the taskbar accepts them, and the connection is remade when the
+    // taskbar's window changes (Explorer restarted).
+    //
+    // Order: a window taken off and put back gets a new button position, and
+    // Explorer placed re-added buttons in the reverse of the order they were
+    // added (observed: A,B,C came back as C,B,A). So each window's button
+    // position is recorded when it's hidden, and windows are re-added
+    // right-to-left, which should restore their original left-to-right order.
     class HiddenTabs
     {
         static readonly string StatePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "midnight-eclipse", "taskbar-hidden.txt");
 
-        readonly ITaskbarList list;
-        readonly Dictionary<long, uint> hidden = new Dictionary<long, uint>(); // hwnd -> pid when hidden
+        class Entry { public uint Pid; public int Position; public bool Applied; }
+
+        ITaskbarList list;
+        IntPtr connectedHost = IntPtr.Zero;
+        readonly Dictionary<long, Entry> hidden = new Dictionary<long, Entry>();    // wanted off the taskbar
+        readonly Dictionary<long, Entry> restoring = new Dictionary<long, Entry>(); // taken off, to be put back
 
         public HiddenTabs()
         {
-            list = (ITaskbarList)new TaskbarListClass();
-            list.HrInit();
             try
             {
                 if (File.Exists(StatePath))
@@ -209,7 +226,8 @@ static class TaskbarMirror
                     {
                         string[] p = line.Split(' ');
                         long h; uint pid;
-                        if (p.Length == 2 && long.TryParse(p[0], out h) && uint.TryParse(p[1], out pid) && Alive(h, pid)) hidden[h] = pid;
+                        if (p.Length == 2 && long.TryParse(p[0], out h) && uint.TryParse(p[1], out pid) && Alive(h, pid))
+                            hidden[h] = new Entry { Pid = pid, Position = int.MaxValue, Applied = true };
                     }
             }
             catch (Exception e) { Console.Error.WriteLine("could not read " + StatePath + ": " + e.Message); }
@@ -222,60 +240,111 @@ static class TaskbarMirror
             return IsWindow(h) && GetWindowThreadProcessId(h, out owner) != 0 && owner == pid;
         }
 
-        public void Apply(HashSet<long> want)
+        // True when calls will reach the taskbar; (re)connects if needed.
+        bool Connect()
+        {
+            IntPtr host = FindTaskbarXamlHost();
+            if (host == IntPtr.Zero) return list != null; // unreadable (flyout open): keep what we have
+            if (list != null && host == connectedHost) return true;
+            if (list != null) { Marshal.ReleaseComObject(list); list = null; }
+            var candidate = (ITaskbarList)new TaskbarListClass();
+            if (candidate.HrInit() != 0) { Marshal.ReleaseComObject(candidate); return false; }
+            list = candidate;
+            connectedHost = host;
+            // A new taskbar shows every button again: re-delete what should be hidden.
+            foreach (var e in hidden.Values) e.Applied = false;
+            return true;
+        }
+
+        // want = the full set of windows to keep off the taskbar. buttons =
+        // the taskbar's current buttons, used to record positions (may be null).
+        public void Apply(HashSet<long> want, List<Button> buttons)
         {
             foreach (long h in new List<long>(hidden.Keys))
                 if (!want.Contains(h))
                 {
-                    if (Alive(h, hidden[h])) list.AddTab(new IntPtr(h));
+                    if (hidden[h].Applied) restoring[h] = hidden[h];
                     hidden.Remove(h);
                 }
             foreach (long h in want)
             {
                 if (hidden.ContainsKey(h)) continue;
+                Entry pending;
+                if (restoring.TryGetValue(h, out pending)) { restoring.Remove(h); hidden[h] = pending; continue; } // never put back: still off
                 IntPtr hwnd = new IntPtr(h);
                 uint pid;
                 if (!IsWindow(hwnd) || GetWindowThreadProcessId(hwnd, out pid) == 0) continue;
-                list.DeleteTab(hwnd);
-                hidden[h] = pid;
+                hidden[h] = new Entry { Pid = pid, Position = ButtonPosition(hwnd, buttons), Applied = false };
             }
-            Save();
+            Flush();
         }
 
-        public void Reassert()
+        // Pushes pending changes to the taskbar and re-deletes hidden windows
+        // (the taskbar re-adds a button on its own at times). Called after
+        // every change and every 2s.
+        public void Flush()
         {
-            bool pruned = false;
+            bool changed = false;
             foreach (long h in new List<long>(hidden.Keys))
+                if (!Alive(h, hidden[h].Pid)) { hidden.Remove(h); changed = true; }
+            foreach (long h in new List<long>(restoring.Keys))
+                if (!Alive(h, restoring[h].Pid)) { restoring.Remove(h); changed = true; }
+
+            if (Connect())
             {
-                if (Alive(h, hidden[h])) list.DeleteTab(new IntPtr(h));
-                else { hidden.Remove(h); pruned = true; }
+                var back = new List<KeyValuePair<long, Entry>>(restoring);
+                back.Sort((a, b) => b.Value.Position.CompareTo(a.Value.Position)); // right-to-left, see above
+                foreach (var kv in back) list.AddTab(new IntPtr(kv.Key));
+                if (back.Count > 0) { restoring.Clear(); changed = true; }
+                foreach (var kv in hidden)
+                {
+                    list.DeleteTab(new IntPtr(kv.Key));
+                    if (!kv.Value.Applied) { kv.Value.Applied = true; changed = true; }
+                }
             }
-            if (pruned) Save();
+            if (changed) Save();
         }
 
         public void RestoreAll()
         {
-            try { Apply(new HashSet<long>()); }
+            try { Apply(new HashSet<long>(), null); }
             catch (Exception e) { Console.Error.WriteLine("restore error: " + e.Message); }
         }
 
+        // Saved: every window that may be off the taskbar and must come back.
         void Save()
         {
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(StatePath));
                 var lines = new List<string>();
-                foreach (var kv in hidden) lines.Add(kv.Key + " " + kv.Value);
+                foreach (var kv in hidden) if (kv.Value.Applied) lines.Add(kv.Key + " " + kv.Value.Pid);
+                foreach (var kv in restoring) lines.Add(kv.Key + " " + kv.Value.Pid);
                 File.WriteAllLines(StatePath, lines.ToArray());
             }
             catch (Exception e) { Console.Error.WriteLine("could not write " + StatePath + ": " + e.Message); }
         }
     }
 
+    // Left-to-right index of the taskbar button a window belongs to, or
+    // int.MaxValue if it can't be told.
+    static int ButtonPosition(IntPtr hwnd, List<Button> buttons)
+    {
+        if (buttons == null) return int.MaxValue;
+        string appId = AppIdForWindow(hwnd, buttons);
+        if (appId == null) return int.MaxValue;
+        for (int i = 0; i < buttons.Count; i++) if (buttons[i].AppId == appId) return i;
+        return int.MaxValue;
+    }
+
     static void Debug()
     {
         IntPtr bridge = FindTaskbarXamlHost();
         Console.Out.WriteLine("apartment=" + Thread.CurrentThread.GetApartmentState() + " bridge=" + bridge);
+        var probe = (ITaskbarList)new TaskbarListClass();
+        int hr = probe.HrInit();
+        Marshal.ReleaseComObject(probe);
+        Console.Out.WriteLine("taskbar accepts changes: " + (hr == 0 ? "yes" : "no (HrInit 0x" + hr.ToString("X8") + ", e.g. session locked)"));
         if (bridge == IntPtr.Zero) return;
         var all = AutomationElement.FromHandle(bridge).FindAll(TreeScope.Descendants, Condition.TrueCondition);
         Console.Out.WriteLine("descendants=" + all.Count);
@@ -331,15 +400,20 @@ static class TaskbarMirror
         return result;
     }
 
-    // Which taskbar button the foreground window belongs to, resolved the way
-    // the taskbar groups windows: (1) the window's own AppUserModelID
-    // property; (2) for packaged apps (Claude, Windows Terminal), the
-    // process's package AUMID; (3) the exe name at the end of an implicit
-    // path-based app ID; (4) last resort, exe base name == button name.
-    // Returns null for the bar itself or no match.
+    // Which taskbar button the foreground window belongs to (null for the bar
+    // itself or no match).
     static string ForegroundAppId(List<Button> buttons)
     {
-        IntPtr hwnd = GetForegroundWindow();
+        return AppIdForWindow(GetForegroundWindow(), buttons);
+    }
+
+    // Which taskbar button a window belongs to, resolved the way the taskbar
+    // groups windows: (1) the window's own AppUserModelID property; (2) for
+    // packaged apps (Claude, Windows Terminal), the process's package AUMID;
+    // (3) the exe name at the end of an implicit path-based app ID; (4) last
+    // resort, exe base name == button name. Null for Zebar or no match.
+    static string AppIdForWindow(IntPtr hwnd, List<Button> buttons)
+    {
         if (hwnd == IntPtr.Zero) return null;
         uint pid;
         GetWindowThreadProcessId(hwnd, out pid);
