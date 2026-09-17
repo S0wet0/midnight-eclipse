@@ -138,7 +138,7 @@
     // subscriber straight away, so the bar resyncs at once.
     const WATCHDOG_MS = 5000;
     const RESUBSCRIBE_COOLDOWN_MS = 30000;
-    const RELOAD_COUNT_KEY = 'midnight-eclipse-watchdog-reloads';
+    const REOPEN_LOG_KEY = 'midnight-eclipse-watchdog-reopens';
     let watchdogMisses = 0;
     let watchdogWarned = false;
     let resubscribing = false;
@@ -148,9 +148,15 @@
     // subscribes again. If the provider is already gone on Zebar's side, that
     // unsubscribe throws ("No provider found with config"), and Zebar keeps
     // the old handle, so every later attempt throws too and the bar stays
-    // stale. Reloading the widget rebuilds every provider; the helpers hand
-    // over to the new instance, so nothing ends up running twice. Reload at
-    // most twice per Zebar session, then just report it.
+    // stale. The fix is a fresh copy of the bar: open one through Zebar, then
+    // close this one. Not location.reload(): Zebar serves a widget through a
+    // one-time token URL, so reloading re-requests a used token and leaves
+    // the bar blank. The helpers hand over to the new copy. At most two
+    // reopens per 10 minutes (shared by every copy), then just report it.
+    const REOPEN_WINDOW_MS = 10 * 60 * 1000;
+    function recentReopens() {
+      try { return JSON.parse(localStorage.getItem(REOPEN_LOG_KEY) ?? '[]').filter(t => Date.now() - t < REOPEN_WINDOW_MS); } catch { return []; }
+    }
     async function resubscribeKomorebi() {
       if (resubscribing || Date.now() - lastResubscribe < RESUBSCRIBE_COOLDOWN_MS) return;
       resubscribing = true;
@@ -158,13 +164,18 @@
         await providers.raw.komorebi.restart();
       } catch (err) {
         console.error('komorebi resubscribe failed', err);
-        let reloads = 0;
-        try { reloads = Number(sessionStorage.getItem(RELOAD_COUNT_KEY)) || 0; } catch {}
-        if (reloads >= 2) {
-          reportError(`komorebi resubscribe failed and reloading didn't help; restart Zebar (${err})`);
+        const reopens = recentReopens();
+        if (reopens.length >= 2) {
+          reportError(`komorebi resubscribe failed and reopening the bar didn't help; restart Zebar (${err})`);
         } else {
-          try { sessionStorage.setItem(RELOAD_COUNT_KEY, String(reloads + 1)); } catch {}
-          location.reload();
+          try { localStorage.setItem(REOPEN_LOG_KEY, JSON.stringify([...reopens, Date.now()])); } catch {}
+          try {
+            const widget = zebar.currentWidget();
+            await zebar.startWidgetPreset(widget.name, 'default', { packId: widget.packId });
+            await widget.close();
+          } catch (reopenErr) {
+            reportError(`komorebi resubscribe failed, and reopening the bar failed too: ${reopenErr}`);
+          }
         }
       } finally {
         lastResubscribe = Date.now();
@@ -210,7 +221,6 @@
       if (actual == null) return; // komorebi busy, wedged or restarting: try again next time
       if (Number.isNaN(actual) || actual === shown) {
         watchdogMisses = 0;
-        try { sessionStorage.removeItem(RELOAD_COUNT_KEY); } catch {} // in sync again
         return;
       }
       if (++watchdogMisses < 2) return; // allow for a switch that's still arriving
