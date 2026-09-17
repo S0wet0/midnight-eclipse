@@ -137,25 +137,86 @@
     // row, restart the provider. komorebi sends the full state to a new
     // subscriber straight away, so the bar resyncs at once.
     const WATCHDOG_MS = 5000;
+    const RESUBSCRIBE_COOLDOWN_MS = 30000;
+    const RELOAD_COUNT_KEY = 'midnight-eclipse-watchdog-reloads';
     let watchdogMisses = 0;
     let watchdogWarned = false;
+    let resubscribing = false;
+    let lastResubscribe = 0;
+
+    // Resubscribing means Zebar's provider restart(), which unsubscribes and
+    // subscribes again. If the provider is already gone on Zebar's side, that
+    // unsubscribe throws ("No provider found with config"), and Zebar keeps
+    // the old handle, so every later attempt throws too and the bar stays
+    // stale. Reloading the widget rebuilds every provider; the helpers hand
+    // over to the new instance, so nothing ends up running twice. Reload at
+    // most twice per Zebar session, then just report it.
+    async function resubscribeKomorebi() {
+      if (resubscribing || Date.now() - lastResubscribe < RESUBSCRIBE_COOLDOWN_MS) return;
+      resubscribing = true;
+      try {
+        await providers.raw.komorebi.restart();
+      } catch (err) {
+        console.error('komorebi resubscribe failed', err);
+        let reloads = 0;
+        try { reloads = Number(sessionStorage.getItem(RELOAD_COUNT_KEY)) || 0; } catch {}
+        if (reloads >= 2) {
+          reportError(`komorebi resubscribe failed and reloading didn't help; restart Zebar (${err})`);
+        } else {
+          try { sessionStorage.setItem(RELOAD_COUNT_KEY, String(reloads + 1)); } catch {}
+          location.reload();
+        }
+      } finally {
+        lastResubscribe = Date.now();
+        resubscribing = false;
+      }
+    }
+    // Asks komorebi which workspace is focused, or null if it can't be told.
+    // Spawned rather than shellExec'd, and killed if it doesn't answer:
+    // komorebic hangs when komorebi is wedged (e.g. after the machine wakes),
+    // and a hung child keeps Zebar's asset-server port open after Zebar
+    // exits, which leaves every later Zebar unable to serve its widgets - a
+    // blank bar until that process is killed. One query at a time, so a slow
+    // one can't pile up either.
+    const QUERY_TIMEOUT_MS = 4000;
+    let queryRunning = false;
+    async function focusedWorkspaceFromKomorebi() {
+      if (queryRunning) return null;
+      queryRunning = true;
+      try {
+        const proc = await zebar.shellSpawn(KOMOREBIC, ['query', 'focused-workspace-index']);
+        let out = '';
+        proc.onStdout(chunk => { out += chunk; });
+        const finished = new Promise(resolve => proc.onExit(status => resolve(status)));
+        const status = await Promise.race([finished, new Promise(resolve => setTimeout(() => resolve(null), QUERY_TIMEOUT_MS))]);
+        if (!status) {
+          console.warn('komorebic query did not answer; killing it');
+          shellKill(proc).catch(() => {});
+          return null;
+        }
+        return status.exitCode === 0 ? parseInt(out.trim(), 10) : null;
+      } catch (err) {
+        if (!watchdogWarned) { watchdogWarned = true; reportError(`komorebi watchdog can't query komorebi: ${err}`); }
+        return null;
+      } finally {
+        queryRunning = false;
+      }
+    }
+
     async function checkKomorebiSubscription() {
       const shown = providers.outputMap.komorebi?.focusedMonitor?.focusedWorkspaceIndex;
       if (shown == null) return; // no komorebi data to compare (not running, or provider erroring)
-      let actual;
-      try {
-        const result = await zebar.shellExec(KOMOREBIC, ['query', 'focused-workspace-index']);
-        if (result.code !== 0) return; // komorebi busy or restarting: try again next time
-        actual = parseInt(result.stdout.trim(), 10);
-      } catch (err) {
-        if (!watchdogWarned) { watchdogWarned = true; reportError(`komorebi watchdog can't query komorebi: ${err}`); }
+      const actual = await focusedWorkspaceFromKomorebi();
+      if (actual == null) return; // komorebi busy, wedged or restarting: try again next time
+      if (Number.isNaN(actual) || actual === shown) {
+        watchdogMisses = 0;
+        try { sessionStorage.removeItem(RELOAD_COUNT_KEY); } catch {} // in sync again
         return;
       }
-      if (Number.isNaN(actual) || actual === shown) { watchdogMisses = 0; return; }
       if (++watchdogMisses < 2) return; // allow for a switch that's still arriving
       watchdogMisses = 0;
       console.warn(`komorebi subscription stale (bar shows workspace ${shown}, komorebi ${actual}); resubscribing`);
-      providers.raw.komorebi.restart().catch(err => reportError(`komorebi resubscribe failed: ${err}`));
+      resubscribeKomorebi();
     }
     setInterval(checkKomorebiSubscription, WATCHDOG_MS);
 
