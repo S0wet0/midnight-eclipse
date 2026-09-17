@@ -138,45 +138,47 @@
     // subscriber straight away, so the bar resyncs at once.
     const WATCHDOG_MS = 5000;
     const RESUBSCRIBE_COOLDOWN_MS = 30000;
-    const REOPEN_LOG_KEY = 'midnight-eclipse-watchdog-reopens';
     let watchdogMisses = 0;
     let watchdogWarned = false;
     let resubscribing = false;
     let lastResubscribe = 0;
 
-    // Resubscribing means Zebar's provider restart(), which unsubscribes and
-    // subscribes again. If the provider is already gone on Zebar's side, that
-    // unsubscribe throws ("No provider found with config"), and Zebar keeps
-    // the old handle, so every later attempt throws too and the bar stays
-    // stale. The fix is a fresh copy of the bar: open one through Zebar, then
-    // close this one. Not location.reload(): Zebar serves a widget through a
-    // one-time token URL, so reloading re-requests a used token and leaves
-    // the bar blank. The helpers hand over to the new copy. At most two
-    // reopens per 10 minutes (shared by every copy), then just report it.
-    const REOPEN_WINDOW_MS = 10 * 60 * 1000;
-    function recentReopens() {
-      try { return JSON.parse(localStorage.getItem(REOPEN_LOG_KEY) ?? '[]').filter(t => Date.now() - t < REOPEN_WINDOW_MS); } catch { return []; }
+    // Recovery, in two steps. First Zebar's provider restart(), which
+    // unsubscribes and subscribes again. If the bar is still out of sync after
+    // that, or restart() throws ("No provider found with config": Zebar then
+    // keeps the old handle, so every later attempt throws too), ask the
+    // taskbar helper to restart Zebar itself. Zebar keeps one komorebi
+    // connection and its cached state for every widget, so reopening the bar
+    // doesn't resync it; only a new Zebar process does (seen after the machine
+    // resumed from sleep). Never location.reload(): Zebar serves a widget
+    // through a one-time token URL, so a reload leaves the bar blank. At most
+    // two Zebar restarts per 10 minutes, then just report it.
+    const ZEBAR_RESTART_LOG_KEY = 'midnight-eclipse-zebar-restarts';
+    const ZEBAR_RESTART_WINDOW_MS = 10 * 60 * 1000;
+    let taskbarHelper = null; // the taskbar-mirror process (set by useTaskbar)
+    function requestZebarRestart(reason) {
+      let recent = [];
+      try { recent = JSON.parse(localStorage.getItem(ZEBAR_RESTART_LOG_KEY) ?? '[]').filter(t => Date.now() - t < ZEBAR_RESTART_WINDOW_MS); } catch {}
+      if (recent.length >= 2) { reportError(`${reason}; restarting Zebar didn't help, so restart it yourself`); return; }
+      if (!taskbarHelper) { reportError(`${reason}; can't restart Zebar (the taskbar helper isn't running)`); return; }
+      try { localStorage.setItem(ZEBAR_RESTART_LOG_KEY, JSON.stringify([...recent, Date.now()])); } catch {}
+      console.warn(`${reason}; asking the taskbar helper to restart Zebar`);
+      shellWrite(taskbarHelper, 'restart-zebar\n').catch(err => reportError(`${reason}; couldn't ask for a Zebar restart: ${err}`));
     }
-    async function resubscribeKomorebi() {
-      if (resubscribing || Date.now() - lastResubscribe < RESUBSCRIBE_COOLDOWN_MS) return;
+    async function resubscribeKomorebi(shown, actual) {
+      if (resubscribing) return;
+      const reason = `bar stuck on workspace ${shown + 1} while komorebi is on ${actual + 1}`;
+      if (Date.now() - lastResubscribe < 2 * RESUBSCRIBE_COOLDOWN_MS) {
+        // Resubscribed recently and still out of sync: that didn't work.
+        if (Date.now() - lastResubscribe >= RESUBSCRIBE_COOLDOWN_MS) requestZebarRestart(reason);
+        return;
+      }
       resubscribing = true;
       try {
         await providers.raw.komorebi.restart();
       } catch (err) {
         console.error('komorebi resubscribe failed', err);
-        const reopens = recentReopens();
-        if (reopens.length >= 2) {
-          reportError(`komorebi resubscribe failed and reopening the bar didn't help; restart Zebar (${err})`);
-        } else {
-          try { localStorage.setItem(REOPEN_LOG_KEY, JSON.stringify([...reopens, Date.now()])); } catch {}
-          try {
-            const widget = zebar.currentWidget();
-            await zebar.startWidgetPreset(widget.name, 'default', { packId: widget.packId });
-            await widget.close();
-          } catch (reopenErr) {
-            reportError(`komorebi resubscribe failed, and reopening the bar failed too: ${reopenErr}`);
-          }
-        }
+        requestZebarRestart(`${reason} (resubscribe failed: ${err})`);
       } finally {
         lastResubscribe = Date.now();
         resubscribing = false;
@@ -225,8 +227,8 @@
       }
       if (++watchdogMisses < 2) return; // allow for a switch that's still arriving
       watchdogMisses = 0;
-      console.warn(`komorebi subscription stale (bar shows workspace ${shown}, komorebi ${actual}); resubscribing`);
-      resubscribeKomorebi();
+      console.warn(`komorebi subscription stale (bar shows workspace ${shown}, komorebi ${actual}); recovering`);
+      resubscribeKomorebi(shown, actual);
     }
     setInterval(checkKomorebiSubscription, WATCHDOG_MS);
 
@@ -405,7 +407,10 @@
         shellWrite(proc, line + '\n').catch(err => reportError(`taskbar mirror: couldn't send window list: ${err}`));
       // A killed helper can't put hidden windows back itself; the next
       // instance does, from the state file it keeps.
-      const procRef = useWatcher(TASKBAR_MIRROR, 'taskbar mirror', data => setButtons(data), proc => send(proc, hideRef.current));
+      const procRef = useWatcher(TASKBAR_MIRROR, 'taskbar mirror', data => setButtons(data), proc => {
+        taskbarHelper = proc; // the komorebi watchdog asks it to restart Zebar when needed
+        send(proc, hideRef.current);
+      });
       useEffect(() => { if (procRef.current) send(procRef.current, hideLine); }, [hideLine]);
       return buttons;
     }

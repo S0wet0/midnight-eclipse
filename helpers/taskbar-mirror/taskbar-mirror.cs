@@ -88,6 +88,7 @@ static class TaskbarMirror
                 while ((line = stdin.ReadLine()) != null)
                 {
                     line = line.Trim();
+                    if (line == "restart-zebar") { RestartZebar(); continue; }
                     if (line != "hide" && !line.StartsWith("hide ")) continue;
                     lock (pendingLock) pendingHide = line.Substring(4).Trim();
                     hideArrived.Set();
@@ -162,6 +163,44 @@ static class TaskbarMirror
         // Handing over to a newer instance: leave hidden windows hidden (the
         // state file says which) instead of flashing them back.
         finally { if (!quit.WaitOne(0)) tabs.RestoreAll(); }
+    }
+
+    // Restarts Zebar, on the bar's request. The bar asks when its komorebi
+    // data has gone stale and restarting the provider didn't help: Zebar keeps
+    // one komorebi connection (and its cached state) for every widget, so only
+    // a new Zebar process resyncs (seen after the machine resumed from sleep).
+    // A relauncher starts Zebar again after 8s unless something else already
+    // has (the komorebi preset's supervisor restarts it within 5s). It's
+    // started through the shell, so it inherits none of this process's
+    // handles; this process inherited Zebar's server socket, and a child
+    // holding it would leave every later Zebar unable to serve its widgets.
+    static int restartRequested; // one at a time
+    static void RestartZebar()
+    {
+        if (Interlocked.Exchange(ref restartRequested, 1) == 1) return;
+        int session = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+        foreach (var zebar in System.Diagnostics.Process.GetProcessesByName("zebar"))
+        {
+            using (zebar)
+            {
+                if (zebar.SessionId != session) continue;
+                try
+                {
+                    string exe = zebar.MainModule.FileName.Replace("'", "''");
+                    var relaunch = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+                        "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"Start-Sleep -Seconds 8; " +
+                        "if (-not (Get-Process zebar -ErrorAction SilentlyContinue)) { Start-Process '" + exe + "' }\"");
+                    relaunch.UseShellExecute = true; // no inherited handles
+                    relaunch.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
+                    System.Diagnostics.Process.Start(relaunch).Dispose();
+                    Console.Error.WriteLine("restarting Zebar (pid " + zebar.Id + ") at the bar's request");
+                    zebar.Kill();
+                }
+                catch (Exception e) { Console.Error.WriteLine("couldn't restart Zebar: " + e.Message); Interlocked.Exchange(ref restartRequested, 0); }
+            }
+            return;
+        }
+        Interlocked.Exchange(ref restartRequested, 0);
     }
 
     // One watcher per session. A newer instance means the bar was reopened or
