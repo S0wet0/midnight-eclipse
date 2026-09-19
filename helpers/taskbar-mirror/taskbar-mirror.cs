@@ -6,6 +6,8 @@
 //                                  active, icon }] in taskbar order.
 //                                  Reads lines from stdin:
 //                                    hide <hwnd>,<hwnd>,...   (or "hide")
+//                                    alive          (every 5s; see Watch)
+//                                    restart-zebar  (see RestartZebar)
 //                                  the complete set of windows to keep OFF
 //                                  the taskbar (the bar sends the windows on
 //                                  komorebi workspaces that aren't displayed).
@@ -89,6 +91,7 @@ static class TaskbarMirror
                 {
                     line = line.Trim();
                     if (line == "restart-zebar") { RestartZebar(); continue; }
+                    if (line == "alive") { Interlocked.Increment(ref heartbeats); continue; }
                     if (line != "hide" && !line.StartsWith("hide ")) continue;
                     lock (pendingLock) pendingHide = line.Substring(4).Trim();
                     hideArrived.Set();
@@ -115,6 +118,9 @@ static class TaskbarMirror
         bool komorebiUp = KomorebiRunning();
         DateTime lastCheck = DateTime.UtcNow;
         bool firstPass = true; // apply once at start: settles windows a killed predecessor left hidden
+        int lastHeartbeats = 0;
+        double silentSeconds = 0;
+        DateTime lastLoop = DateTime.UtcNow;
         try
         {
             while (!stdinClosed.WaitOne(0) && !quit.WaitOne(0))
@@ -123,10 +129,28 @@ static class TaskbarMirror
                 {
                     string hide;
                     lock (pendingLock) { hide = pendingHide; pendingHide = null; }
+                    // The bar's page sends "alive" every 5s. Its web view's renderer can
+                    // die (seen after sleep) and WebView2 doesn't replace it: the window
+                    // stays, grey with a spinner, while Zebar and this helper keep
+                    // running. 120s of silence while awake closes the bar, and the
+                    // widget watchdog reopens it with a new page. Not less: Chromium
+                    // slows a hidden page's timers (e.g. the bar under a fullscreen
+                    // video) to once a minute. A loop gap over 5s is sleep, not
+                    // silence. A bar that never sent "alive" (older version) isn't
+                    // watched.
+                    var now = DateTime.UtcNow;
+                    double gap = (now - lastLoop).TotalSeconds;
+                    lastLoop = now;
+                    int beats = Interlocked.CompareExchange(ref heartbeats, 0, 0);
+                    if (beats != lastHeartbeats) { lastHeartbeats = beats; silentSeconds = 0; }
+                    else if (beats > 0 && gap < 5) silentSeconds += gap;
+                    bool closeBar = silentSeconds >= 120;
+                    if (closeBar) silentSeconds = -60; // then give the reopened bar time to start
+
                     bool dirty = firstPass;
                     firstPass = false;
                     if (hide != null) { want = ParseHwnds(hide); dirty = true; }
-                    if ((DateTime.UtcNow - lastCheck).TotalSeconds >= 2)
+                    if (closeBar || (DateTime.UtcNow - lastCheck).TotalSeconds >= 2)
                     {
                         lastCheck = DateTime.UtcNow;
                         bool up = KomorebiRunning();
@@ -134,7 +158,7 @@ static class TaskbarMirror
                         // The taskbar re-adds a deleted window's button on its
                         // own at times (e.g. Explorer restarting): re-delete.
                         else tabs.Flush();
-                        var own = widgets.Check();
+                        var own = widgets.Check(closeBar);
                         if (!own.SetEquals(ownWidgets)) { ownWidgets = own; dirty = true; }
                     }
                     if (dirty)
@@ -175,6 +199,7 @@ static class TaskbarMirror
     // handles; this process inherited Zebar's server socket, and a child
     // holding it would leave every later Zebar unable to serve its widgets.
     static int restartRequested; // one at a time
+    static int heartbeats; // "alive" lines from the bar
     static void RestartZebar()
     {
         if (Interlocked.Exchange(ref restartRequested, 1) == 1) return;
@@ -244,7 +269,7 @@ static class TaskbarMirror
         // off the taskbar: Zebar is meant to (shownInTaskbar: false), but a
         // tooltip reopened with start-widget-preset came back with a taskbar
         // button (seen), which the bar then mirrored as a Zebar icon.
-        public HashSet<long> Check()
+        public HashSet<long> Check(bool closeBar)
         {
             var own = new HashSet<long>();
             System.Diagnostics.Process zebar = null;
@@ -256,6 +281,12 @@ static class TaskbarMirror
             {
                 var windows = WidgetWindows((uint)zebar.Id);
                 foreach (var h in windows.Values) own.Add(h);
+                long bar;
+                if (closeBar && windows.TryGetValue("bar", out bar))
+                {
+                    Console.Error.WriteLine("the bar stopped responding; closing it so it's reopened");
+                    PostMessage(new IntPtr(bar), 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+                }
                 for (int i = 0; i < Names.Length; i++)
                 {
                     if (windows.ContainsKey(Names[i])) { misses[i] = 0; continue; }
@@ -330,6 +361,7 @@ static class TaskbarMirror
     [ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090")] class TaskbarListClass { }
 
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     // The windows this process takes off the taskbar. Saved to a file so
     // that if this process is killed (no chance to restore), the next

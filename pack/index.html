@@ -156,6 +156,11 @@
     const ZEBAR_RESTART_LOG_KEY = 'midnight-eclipse-zebar-restarts';
     const ZEBAR_RESTART_WINDOW_MS = 10 * 60 * 1000;
     let taskbarHelper = null; // the taskbar-mirror process (set by useTaskbar)
+    // Heartbeat for the helper: if this page's renderer dies (seen after
+    // sleep), the window stays up but draws nothing, and only something
+    // outside the page can notice. The helper closes a silent bar and
+    // reopens it.
+    setInterval(() => { if (taskbarHelper) shellWrite(taskbarHelper, 'alive\n').catch(() => {}); }, 5000);
     function requestZebarRestart(reason) {
       let recent = [];
       try { recent = JSON.parse(localStorage.getItem(ZEBAR_RESTART_LOG_KEY) ?? '[]').filter(t => Date.now() - t < ZEBAR_RESTART_WINDOW_MS); } catch {}
